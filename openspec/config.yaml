@@ -1,0 +1,65 @@
+schema: spec-driven
+
+context: |
+  Zuat is a Python 3.12 package for tracking and reconciling coding-agent
+  assets. Product requirements and behavioral decisions belong in OpenSpec
+  capability specs; this context records only stable implementation boundaries.
+
+  Package boundaries under src/zuat:
+  - cli/ is the optional Click command surface. CLI handlers call only the
+    public zuat.pub interface and never reach directly into specs, gitcore,
+    or other implementation modules.
+  - pub/ is Zuat's supported public Python interface and orchestration
+    boundary. Public commands used by both Python callers and the CLI live here.
+  - utils/ contains internal reusable mechanics. Utilities stay domain-focused,
+    do not become an alternate public surface, and do not select agent-native
+    behavior by switching on agent identity.
+  - specs/ owns agent-specific modeling and resolution. specs/interface.py
+    defines the shared resolver contract; separate Codex, Claude, Kimi, and Pi
+    implementations provide agent-specific behavior.
+  - Agent-specific resolvers own native validation, destinations, formats,
+    scopes, reconciliation, and verification. Shared helpers provide only
+    agent-neutral mechanics and never select behavior by agent identity.
+  - gitcore/ owns the private append-only journal and named-profile persistence
+    through a Zuat-controlled GitPython adapter. Git indexes, commits, hashes,
+    refs, branches, and recovery mechanics never cross the public boundary.
+
+  Dependency policy:
+  - The base zuat package and public Python interface must import without Click.
+  - Zuat owns its native lifecycle implementation, domain values, and control
+    state as a self-contained library.
+  - Click is available only through the optional cli dependency extra, installed
+    as zuat[cli].
+  - The packaged console command must fail with concise installation guidance
+    when the cli extra is unavailable, without exposing an import traceback.
+
+operations:
+  apply:
+    guidance:
+      - >-
+        Follow red-green-refactor for every behavior change: write or update the
+        smallest meaningful automated test first, run it, and confirm it fails
+        for the intended behavioral reason before changing implementation code.
+      - >-
+        Implement only after the relevant test is red, then rerun that test to
+        green before refactoring or proceeding to the next behavior. A test that
+        passes before implementation does not establish the required red state
+        and must be corrected so it exercises the missing behavior.
+      - >-
+        Keep test evidence behavioral: assert public outputs, state transitions,
+        side effects, isolation, rollback, or integration outcomes rather than
+        implementation text or structure.
+      - Use pytest as the default test framework for implementation behavior,
+        edge cases, parsing, validation, error handling, and module integration.
+      - Use Behave only for genuinely cross-component, user-observable behavior
+        that a single focused pytest test cannot fully establish.
+      - Do not use Behave scenarios whose evidence is only regex matching,
+        substring matching, source inspection, file counting, scenario counting,
+        or another structural proxy for behavior.
+      - Every Behave scenario must execute a public workflow and assert an
+        observable state transition, side effect, rollback, isolation boundary,
+        or integration outcome.
+      - Prefer pytest whenever one focused test can prove the complete behavior;
+        do not duplicate unit coverage in Behave for presentation purposes.
+      - Run affected pytest tests while implementing, then run the broader
+        pytest and qualifying Behave suites before declaring work complete.
