@@ -72,3 +72,8 @@ class CodexResolver:
 
     def plugin_adapter(self):
         return self._support.plugins(self._support.bind(self._support.state_root or self.home))
+
+    def bundle_adapter(self):
+        """Keep generated manifests and native bootstrap policy agent-owned."""
+        from zuat.specs.codex_bundles import CodexBundleAdapter
+        return CodexBundleAdapter()

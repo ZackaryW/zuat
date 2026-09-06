@@ -6,28 +6,15 @@ from dataclasses import replace
 
 from zuat.gitcore import OperationKind, OperationOutcome
 from zuat.pub.artifact_models import (
-    ArtifactExtension,
     ArtifactStatus,
     PluginArtifactContext,
 )
 from zuat.pub.models import OperationResult, OperationStatus
 from zuat.pub.results import failed
+from zuat.pub.extensions import ZuatExtension, _register, _registrations
 from zuat.specs.interface import ResolutionError
 from zuat.utils.contexts import project_context
 from zuat.utils.runtime_paths import contained_path
-
-_registered: dict[str, ArtifactExtension] = {}
-
-
-def register_extension(extension):
-    """Register process-wide locator code without serializing it into history."""
-    if (
-        extension.identifier in _registered
-        and _registered[extension.identifier] != extension
-    ):
-        raise ValueError("artifact extension is already registered")
-    _registered[extension.identifier] = extension
-
 
 class ArtifactOperations:
     """Resolve runtime artifacts while journaling only host selection policy.
@@ -38,16 +25,11 @@ class ArtifactOperations:
 
     def __init__(self, service):
         self.service = service
-        self.extensions: dict[str, ArtifactExtension] = dict(_registered)
+        self.extensions = _registrations()
 
-    def register(self, extension: ArtifactExtension):
+    def register(self, extension: ZuatExtension):
         """Register a locator on this service; reject conflicting code for one ID."""
-        if (
-            extension.identifier in self.extensions
-            and self.extensions[extension.identifier] != extension
-        ):
-            raise ValueError("artifact extension is already registered")
-        self.extensions[extension.identifier] = extension
+        _register(self.extensions, extension)
 
     def _key(self, ref, identifier):
         """Bind policy to installation context rather than a plugin name alone.
@@ -132,6 +114,10 @@ class ArtifactOperations:
             )
         except (OSError, ValueError, TypeError):
             return replace(result, reason="unsafe-artifact-path")
+        except Exception:
+            # Host locators are arbitrary code; expose neither their exceptions
+            # nor possible credentials as durable policy or native evidence.
+            return replace(result, reason="artifact-locator-failed")
         return replace(
             result,
             effective=bool(paths),

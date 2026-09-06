@@ -28,7 +28,7 @@ project context remain separate. `home` selects the native user home;
 `project_root` selects a project. Source `trust`, `trust_project`, and ownership
 `force` are independent permissions, not substitutes for one another.
 
-Python hosts can register `ArtifactExtension(identifier, version, locate)` and
+Python hosts can subclass `ZuatExtension`, call `register_extension(instance)`, and
 call `artifact_status`, `resolve_artifacts`, `set_artifact_policy`, or
 `clear_artifact_policy`. Locators receive immutable, transient installed context.
 Returned paths must remain inside its verified root. Policy controls Zuat
@@ -127,3 +127,117 @@ still required where the selected agent's provider inspection depends on it.
 
 This does not replace ZPP's dependency, translate its source objects, migrate
 predecessor ownership, remove old hooks, or manage consumer `.gitignore` policy.
+
+## Managed bundles and extensions
+
+The base Python package provides these methods on `Zuat` and equivalent helpers
+exported from `zuat.pub`:
+
+```python
+build_bundle(source, *, name=None, revision="HEAD") -> BundleBuild
+get_bundle(bundle_id) -> BundleRecord
+list_bundles() -> tuple[BundleRecord, ...]
+resolve_bundle(bundle_id, *, build_revision=None, agent) -> Path
+bootstrap_bundle(bundle_id, *, build_revision=None, agents=None,
+                 trust=False, force=False) -> BundleOperationResult
+remove_bundle(bundle_id, *, agents=None) -> BundleOperationResult
+```
+
+`Zuat(..., bundle_root=None)` selects an independent compiler store, defaulting
+to `<home>/.zuat` (the current user's home when omitted). Module-level helpers
+accept `root`, `home`, `bundle_root`, `project_root`, and `trust_project` context.
+`root`/`ZUAT_HOME` still select the existing Git registry; neither store may
+contain the other. Callers use public handles, not the private index layout.
+
+Sources are working-tree directories or explicit HTTPS Git URLs; `git+file://`
+URLs select local Git repositories, including their requested commit/ref. Git
+fetches have a bounded timeout, no interactive credentials, checkout filters,
+hooks, submodules, or source build scripts. Credential-bearing URLs are rejected.
+Skill frontmatter requires a name and description. Normalized names must be
+unique; nested skill payloads, links, reparse points and special files are rejected.
+Git inputs with case-colliding paths or reserved Windows names are rejected rather
+than silently dropping support files during portable materialization.
+Input capture is bounded to 10,000 files / 100 MiB and checks concurrent changes.
+
+Builds retain validated skill/support bytes and agent-specific manifests. Content
+and renderer inputs determine an immutable build revision. Repeated equivalent
+builds reuse it. Missing/modified output raises `BundleOutputError`, never a silent
+rebuild. `BundleBuildError`, `BundleStoreError`, and `BundleNotFoundError` are other
+typed `BundleError` failures. Generated bodies and local source bindings live
+only in the compiler store, not Git history, profiles, or recovery records.
+
+Bootstrap is user-scope only. Codex and Claude use automatically registered local
+catalogs; Pi uses a registered local package route. Pi's generated-directory path
+is transient routing, not its durable plugin ID, and arbitrary third-party local
+packages do not acquire a bundle identity from their manifest name alone. Kimi
+bootstrap is unsupported: there is no loose-skill fallback. Durable Pi bundle IDs
+are not native install paths; use `bootstrap_bundle` to install a selected build.
+Omitted agent selection
+uses supported available managers; no available manager is a non-success result.
+Native availability, format/version support and discovery failures remain explicit.
+
+`trust=True` is required for generated local-source bootstrap. `force=True` does
+not grant trust or adopt foreign installations. For an existing managed target,
+Zuat attempts an update; only explicit force permits bounded removal followed by
+one install attempt. Failure after deletion can leave the target absent. There is
+no automatic retry, reconciliation daemon, cross-agent transaction, compensating
+rollback, or guaranteed restoration from retained bundle builds. Removal retains
+the registration while any owned target is unresolved, and unregisters after
+verified absence. Retained build files are not garbage-collected by removal.
+
+Results report each target independently (`success`, `current`, `unsupported`,
+`unavailable`, `failed`, `indeterminate`, or verified `absent` on removal).
+`installed_version` and `activation` describe native observations separately
+from the requested build. `get_bundle`/`list_bundles` show **historical** attempts,
+not live status; interrupted attempts remain indeterminate on reopen without
+replaying native commands. `result.ok` means all selected targets succeeded or
+are current/verified absent; it is not an atomic all-agent guarantee.
+
+An extension is ordinary explicitly supplied Python, not an automatic loader:
+
+```python
+from pathlib import Path
+from zuat.pub import PluginArtifactContext, Zuat, ZuatExtension
+
+class ReviewTools(ZuatExtension):
+    identifier = "review-tools"
+    version = "1"  # Extension contract, not a native plugin version.
+
+    def locate_artifacts(self, context: PluginArtifactContext) -> tuple[Path, ...]:
+        return (context.runtime_root / "skills/reviewer/SKILL.md",)
+
+    def bootstrap(self, state: Zuat, source: Path):
+        build = state.build_bundle(source, name="review-tools")
+        return state.bootstrap_bundle(build.bundle_id, agents=("claude",), trust=True)
+
+# Registration itself does not build, install, invoke locators or persist code.
+with Zuat() as state:
+    extension = ReviewTools()
+    state.register_extension(extension)
+    # Explicit invocation, when wanted:
+    # result = extension.bootstrap(state, Path("./my-skills"))
+```
+
+`locate_artifacts` is optional and defaults to `()`. Registration validates bounded
+`identifier`/`version` metadata and captures the bound locator. Re-registering the
+same unchanged instance is idempotent; conflicting instances or changed metadata
+are rejected. Module-level `register_extension` supplies defaults for future
+services only. Service registrations stay local and must be supplied again after
+restart. Artifact eligibility still requires current native evidence, version,
+activation, host policy and containment. No extension code is loaded from `.zuat`.
+
+```console
+zuat bundle build ./my-skills --name review-tools --json
+zuat bundle list --json
+zuat bundle status <bundle-id> --json
+zuat bundle bootstrap <bundle-id> --agent claude --trust --force --json
+zuat bundle remove <bundle-id> --agent claude --json
+zuat --root ./tracking bundle --home ./test-home --bundle-root ./compiler list
+```
+
+Use `build --revision` for a Git ref and `bootstrap --build-revision` for a retained
+compiled revision. Run `python examples/managed_bundle.py --agent claude` for a
+complete public-API build/reopen/bootstrap/artifact/remove example. It uses only
+temporary native homes and requires the selected native executable, not Click or
+predecessor packages. Compiler attribution is included in the packaged
+`zuat/utils/bundles/NOTICE`.

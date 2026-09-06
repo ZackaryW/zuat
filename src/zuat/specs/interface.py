@@ -27,6 +27,22 @@ class PluginCapabilities:
         return scope in fields.get(operation, frozenset())
 
 
+class BundleAdapter(Protocol):
+    """Agent-owned compilation and supported native bootstrap preparation."""
+
+    contract: str
+
+    def render(self, name: str, version: str) -> dict[str, bytes]: ...
+
+    def initialize(self, native: PluginAdapter) -> None: ...
+
+    def reference(self, record) -> PluginRef: ...
+
+    def prepare(self, native: PluginAdapter, record, output: Path, store_root: Path) -> PluginRef: ...
+
+    def matches(self, record, observed: PluginRecord, outputs: tuple[Path, ...]) -> bool: ...
+
+
 class PluginAdapter(Protocol):
     capabilities: PluginCapabilities
     discovery_diagnostics: tuple[str, ...]
@@ -162,6 +178,8 @@ class Materialization:
 @runtime_checkable
 class AgentResolver(Protocol):
     agent: str
+
+    def bundle_adapter(self) -> BundleAdapter | None: ...
 
     def inspect_asset(self, source: Path, kind: AssetKind, scope: str, *, name: str | None = None, locator: str | None = None) -> TargetInspection: ...
 

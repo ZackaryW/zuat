@@ -11,6 +11,10 @@ context: |
     or other implementation modules.
   - pub/ is Zuat's supported public Python interface and orchestration
     boundary. Public commands used by both Python callers and the CLI live here.
+    ZuatExtension instances are explicitly registered runtime host code; extensions
+    compose public APIs rather than accessing private compiler-store files.
+  - The private .zuat compiler store is separate from the Git registry. Generated
+    bundle bodies stay there; tracking history retains reference metadata only.
   - utils/ contains internal reusable mechanics. Utilities stay domain-focused,
     do not become an alternate public surface, and do not select agent-native
     behavior by switching on agent identity.

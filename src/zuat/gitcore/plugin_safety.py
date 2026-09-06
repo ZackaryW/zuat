@@ -27,6 +27,8 @@ def clean_metadata(metadata):
         "policy_key",
         "policy",
         "artifact_id",
+        "bundle_id",
+        "build_revision",
     }
     cleaned = {}
     for key, value in metadata.items():

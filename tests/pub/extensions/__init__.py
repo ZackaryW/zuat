@@ -1,0 +1,1 @@
+"""Public extension contract behavior."""

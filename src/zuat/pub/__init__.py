@@ -12,7 +12,6 @@ from zuat.gitcore.models import (
     Profile,
 )
 from zuat.pub.artifact_models import (
-    ArtifactExtension,
     ArtifactStatus,
     PluginArtifactContext,
 )
@@ -24,6 +23,11 @@ from zuat.pub.models import (
     OperationResult,
     OperationStatus,
     ZuatRequest,
+)
+from zuat.pub.extensions import ZuatExtension, register_extension
+from zuat.pub.bundles.models import (
+    BundleBuild, BundleBuildError, BundleError, BundleNotFoundError,
+    BundleOperationResult, BundleOutputError, BundleRecord, BundleStoreError, BundleTarget,
 )
 from zuat.specs.native import (
     PluginContribution,
@@ -333,6 +337,7 @@ def _plugin_call(
     home=None,
     project_root=None,
     trust_project=False,
+    bundle_root=None,
     **kwargs,
 ):
     """Dispatch runtime plugin/artifact calls with one short-lived service context.
@@ -343,7 +348,8 @@ def _plugin_call(
     from zuat.pub.service import Zuat
 
     with Zuat(
-        root=root, home=home, project_root=project_root, trust_project=trust_project
+        root=root, home=home, project_root=project_root, trust_project=trust_project,
+        bundle_root=bundle_root,
     ) as service:
         return getattr(service, method)(*args, **kwargs)
 
@@ -353,6 +359,36 @@ def discover_plugins(agent, *, include_available=False, **context):
     return _plugin_call(
         "discover_plugins", agent, include_available=include_available, **context
     )
+
+
+def get_bundle(bundle_id, **context):
+    """Get a stored registration; this is not a live native status query."""
+    return _plugin_call("get_bundle", bundle_id, **context)
+
+
+def build_bundle(source, *, name=None, revision="HEAD", **context):
+    """Compile a source into immutable outputs in the selected compiler store."""
+    return _plugin_call("build_bundle", source, name=name, revision=revision, **context)
+
+
+def resolve_bundle(bundle_id, *, build_revision=None, agent, **context):
+    """Resolve one integrity-checked retained build without private path knowledge."""
+    return _plugin_call("resolve_bundle", bundle_id, build_revision=build_revision, agent=agent, **context)
+
+
+def list_bundles(**context):
+    """List bundle handles from the explicitly selected compiler store."""
+    return _plugin_call("list_bundles", **context)
+
+
+def bootstrap_bundle(bundle_id, *, build_revision=None, agents=None, trust=False, force=False, **context):
+    """Attempt independent native targets with explicit source trust and force."""
+    return _plugin_call("bootstrap_bundle", bundle_id, build_revision=build_revision, agents=agents, trust=trust, force=force, **context)
+
+
+def remove_bundle(bundle_id, *, agents=None, **context):
+    """Remove only registered targets; unresolved native state retains registration."""
+    return _plugin_call("remove_bundle", bundle_id, agents=agents, **context)
 
 
 def install_plugin(ref, *, trust=False, force=False, **context):
@@ -368,13 +404,6 @@ def update_plugin(ref, *, force=False, **context):
 def remove_plugin(ref, *, force=False, **context):
     """Remove an entire native plugin installation, not its individual contributions."""
     return _plugin_call("remove_plugin", ref, force=force, **context)
-
-
-def register_artifact(extension):
-    """Register runtime locator code for subsequent services without journaling code."""
-    from zuat.pub.artifacts import register_extension
-
-    register_extension(extension)
 
 
 def resolve_artifacts(agent, identifier, **context):
@@ -400,6 +429,11 @@ def clear_artifact_policy(ref, identifier, **context):
 
 
 __all__ = [
+    "bootstrap_bundle", "remove_bundle",
+    "build_bundle", "resolve_bundle",
+    "BundleBuild", "BundleBuildError", "BundleError", "BundleNotFoundError",
+    "BundleOperationResult", "BundleOutputError", "BundleRecord", "BundleStoreError",
+    "BundleTarget", "get_bundle", "list_bundles",
     "AssetInspection",
     "inspect_asset",
     "update_asset",
@@ -407,14 +441,14 @@ __all__ = [
     "PluginRecord",
     "PluginRevision",
     "PluginContribution",
-    "ArtifactExtension",
+    "ZuatExtension",
     "ArtifactStatus",
     "PluginArtifactContext",
     "discover_plugins",
     "install_plugin",
     "update_plugin",
     "remove_plugin",
-    "register_artifact",
+    "register_extension",
     "resolve_artifacts",
     "artifact_status",
     "set_artifact_policy",

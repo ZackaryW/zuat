@@ -10,6 +10,7 @@ import click
 
 from zuat import pub as api
 from zuat.cli.plugins import attach_plugins
+from zuat.cli.bundles import attach_bundles
 
 AGENT = click.Choice(api.SUPPORTED_AGENTS, case_sensitive=True)
 KIND = click.Choice(("skill", "hook", "plugin"), case_sensitive=True)
@@ -118,6 +119,7 @@ def _selected_agents(agents: tuple[str, ...]) -> tuple[str, ...]:
 
 
 attach_plugins(cli, _finish)
+attach_bundles(cli)
 
 
 @cli.command("status")

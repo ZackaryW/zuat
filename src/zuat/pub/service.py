@@ -47,6 +47,7 @@ class Zuat:
         project_root: str | Path | None = None,
         resolvers: Mapping[str, AgentResolver] | None = None,
         trust_project: bool = False,
+        bundle_root: str | Path | None = None,
     ) -> None:
         """Share one registry and resolver cache across all operation collaborators.
 
@@ -60,10 +61,18 @@ class Zuat:
         from zuat.pub.profile_operations import ProfileOperations
         from zuat.pub.projections import AssetProjections
         from zuat.pub.recovery import RecoveryOperations
+        from zuat.pub.bundles.store import BundleStore
+        from zuat.gitcore.repository import resolve_app_root
 
+        self.home = Path(home).resolve() if home is not None else None
+        # Reject invalid overlap before Git initialization can create files in
+        # what the caller intended to be compiler storage (or a parent of it).
+        self._bundles = BundleStore(
+            Path(bundle_root) if bundle_root is not None else (self.home or Path.home()) / ".zuat",
+            registry.root if registry is not None else resolve_app_root(root),
+        )
         self.registry = registry or GitRegistry(root)
         self._owns_registry = registry is None
-        self.home = Path(home).resolve() if home is not None else None
         self.project_root = (
             Path(project_root).resolve() if project_root is not None else None
         )
@@ -81,14 +90,42 @@ class Zuat:
         """Compare one source against its native target without adopting or mutating it."""
         return self._assets.inspect(asset)
 
+    def get_bundle(self, bundle_id):
+        """Read historical registration without inspecting or mutating native state."""
+        return self._bundles.get(bundle_id)
+
+    def build_bundle(self, source, *, name=None, revision="HEAD"):
+        """Compile immutable native outputs without installing or journaling bodies."""
+        from zuat.pub.bundles.building import build
+        return build(self, source, name=name, revision=revision)
+
+    def resolve_bundle(self, bundle_id, *, build_revision=None, agent):
+        """Resolve a verified retained build, never a silent rebuild or substitute."""
+        from zuat.pub.bundles.building import resolve
+        return resolve(self, bundle_id, build_revision=build_revision, agent=agent)
+
+    def list_bundles(self):
+        """List immutable public records; unfinished attempts are never resumed."""
+        return self._bundles.list()
+
+    def bootstrap_bundle(self, bundle_id, *, build_revision=None, agents=None, trust=False, force=False):
+        """Attempt a selected build once per agent; force permits bounded replacement."""
+        from zuat.pub.bundles.operations import bootstrap
+        return bootstrap(self, bundle_id, build_revision=build_revision, agents=agents, trust=trust, force=force)
+
+    def remove_bundle(self, bundle_id, *, agents=None):
+        """Remove registered targets explicitly, retaining unresolved registrations."""
+        from zuat.pub.bundles.operations import remove
+        return remove(self, bundle_id, agents=agents)
+
     def update_asset(
         self, asset: AssetInput, *, force: bool = False
     ) -> OperationResult:
         """Replace one existing independent asset; force permits conflict, not ambiguity."""
         return self._assets.update(asset, force=force)
 
-    def register_artifact(self, extension):
-        """Register runtime locator code on this service, never in the journal."""
+    def register_extension(self, extension):
+        """Register host code on this service without invoking or persisting it."""
         return self._artifacts.register(extension)
 
     def artifact_status(self, ref, identifier, *, revision=None):
@@ -234,4 +271,9 @@ class Zuat:
                 state_root=self.registry.control_root / "native",
                 trust_project=self.trust_project,
             )
-        return self._resolvers[agent]
+        resolver = self._resolvers[agent]
+        bundle_adapter = getattr(resolver, "bundle_adapter", lambda: None)()
+        binder = getattr(bundle_adapter, "bind", None)
+        if binder is not None:
+            binder(resolver.plugin_adapter(), self._bundles.list(), self._bundles.root)
+        return resolver

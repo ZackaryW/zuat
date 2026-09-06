@@ -8,6 +8,17 @@ from zuat.pub import AssetSelector
 from zuat.specs.native import PluginRef
 
 
+def extension(identifier, version, locate):
+    class TestExtension(pub.ZuatExtension):
+        def locate_artifacts(self, context):
+            return locate(context)
+
+    result = TestExtension()
+    result.identifier = identifier
+    result.version = version
+    return result
+
+
 def test_plugin_skills_and_hooks_keep_provider_identity(setup):
     service, manager, _ = setup
     manager.version = "1"
@@ -28,8 +39,8 @@ def test_artifact_resolution_policy_and_native_disablement(setup):
     service, manager, _ = setup
     manager.version = "1"
     ref = PluginRef("claude", "review@team")
-    extension = pub.ArtifactExtension("review", "1", lambda context: (context.runtime_root / "skills/review/SKILL.md",))
-    service.register_artifact(extension)
+    selected = extension("review", "1", lambda context: (context.runtime_root / "skills/review/SKILL.md",))
+    service.register_extension(selected)
     status = service.artifact_status(ref, "review")
     assert status.effective
     assert status.paths == (manager.root / "skills/review/SKILL.md",)
@@ -51,14 +62,14 @@ def test_artifact_roots_and_revision_are_revalidated(setup, tmp_path):
     service, manager, _ = setup
     manager.version = "1"
     ref = PluginRef("claude", "review@team")
-    service.register_artifact(pub.ArtifactExtension("escape", "1", lambda context: (context.runtime_root / "../outside",)))
+    service.register_extension(extension("escape", "1", lambda context: (context.runtime_root / "../outside",)))
     assert service.artifact_status(ref, "escape").reason == "unsafe-artifact-path"
-    service.register_artifact(pub.ArtifactExtension("safe", "1", lambda context: (context.runtime_root / "skills/review/SKILL.md",)))
+    service.register_extension(extension("safe", "1", lambda context: (context.runtime_root / "skills/review/SKILL.md",)))
     old = service.artifact_status(ref, "safe").revision
     manager.version = "2"
     assert service.artifact_status(ref, "safe", revision=old).reason == "stale-revision"
     with pytest.raises(ValueError):
-        service.register_artifact(pub.ArtifactExtension("safe", "2", lambda context: ()))
+        service.register_extension(extension("safe", "2", lambda context: ()))
     assert service.artifact_status(ref, "missing").reason == "unknown-extension"
 
 
@@ -111,7 +122,7 @@ def test_artifact_runtime_moves_and_scope_policy_remain_isolated(setup, tmp_path
     def locate(context):
         contexts.append(context)
         return (context.runtime_root / "skills/review/SKILL.md",)
-    service.register_artifact(pub.ArtifactExtension("moving", "1", locate))
+    service.register_extension(extension("moving", "1", locate))
     ref = PluginRef("claude", "review@team")
     original = service.artifact_status(ref, "moving")
     assert original.effective  # Resolution eligibility is not a claim of native execution.
@@ -141,7 +152,7 @@ def test_artifact_symlink_escape_is_rejected(setup, tmp_path):
         link.symlink_to(outside, target_is_directory=True)
     except OSError:
         pytest.skip("symbolic links are unavailable on this filesystem")
-    service.register_artifact(pub.ArtifactExtension("symlink", "1", lambda context: (context.runtime_root / "escape/private.md",)))
+    service.register_extension(extension("symlink", "1", lambda context: (context.runtime_root / "escape/private.md",)))
     status = service.artifact_status(PluginRef("claude", "review@team"), "symlink")
     assert not status.effective
     assert status.paths == ()
@@ -152,7 +163,7 @@ def test_artifact_context_cannot_be_rebound_to_another_project(setup, tmp_path):
     from zuat.utils.contexts import project_context
     service, manager, _ = setup
     manager.version = "1"
-    service.register_artifact(pub.ArtifactExtension("context", "1", lambda context: (context.runtime_root / "skills/review/SKILL.md",)))
+    service.register_extension(extension("context", "1", lambda context: (context.runtime_root / "skills/review/SKILL.md",)))
     ref = PluginRef("claude", "review@team", "project", context=project_context(tmp_path / "project-a"))
     service.project_root = tmp_path / "project-b"
     result = service.set_artifact_policy(ref, "context", "enabled")

@@ -19,6 +19,7 @@ from zuat.specs.native import (
     UnsupportedNativeOperation,
 )
 from zuat.utils.plugin_lifecycle import CommandPluginAdapter
+from zuat.utils.plugin_state import is_direct_source
 
 
 class PiPluginAdapter(CommandPluginAdapter):
@@ -34,16 +35,19 @@ class PiPluginAdapter(CommandPluginAdapter):
     def requested_version(self, ref):
         return (
             ref.native_ref.rsplit("@", 1)[1]
-            if self.canonical_id(ref.native_ref) != ref.native_ref
+            if ref.native_ref.startswith("npm:") and self.canonical_id(ref.native_ref) != ref.native_ref
             else None
         )
 
-    @staticmethod
-    def canonical_id(source: str) -> str:
+    def canonical_id(self, source: str) -> str:
         if source.startswith("npm:"):
             package = source[4:]
             split = package.rfind("@")
             return "npm:" + (package[:split] if split > 0 else package)
+        if is_direct_source(source):
+            # A package name alone is not Pi's native local identity. Only an
+            # explicit compiler registration can bind its known runtime route.
+            return getattr(self, "bundle_paths", {}).get(Path(source).resolve(), source)
         return source
 
     def _find(self, records, ref):
@@ -65,7 +69,7 @@ class PiPluginAdapter(CommandPluginAdapter):
     def install(self, ref, *, trust=False):
         self.validate_install(ref, trust=trust)
         canonical = self.canonical_id(ref.native_ref)
-        if canonical != ref.native_ref:
+        if ref.native_ref.startswith("npm:") and canonical != ref.native_ref:
             desired = PluginRecord(
                 self.contextual_ref(ref),
                 canonical.removeprefix("npm:").rsplit("/", 1)[-1],
@@ -76,8 +80,20 @@ class PiPluginAdapter(CommandPluginAdapter):
             return self.reconcile(desired)
         return super().install(ref, trust=trust)
 
+    def validate_install(self, ref, *, trust=False):
+        """A durable local bundle ID is not a native relative-path install source.
+
+        Only the explicit source route supplied by bundle preparation can install
+        it, and the inherited direct-source gate still requires source trust.
+        """
+        if ref.native_ref.startswith("local/"):
+            raise UnsupportedNativeOperation("local bundle identity is not an install source")
+        super().validate_install(ref, trust=trust)
+
     def preflight(self, ref, operation, *, desired=None):
         self._validate(ref, operation)
+        if operation == "update" and self.canonical_id(ref.native_ref).startswith("local/"):
+            raise UnsupportedNativeOperation("local package replacement requires explicit remove/install")
         if desired is None:
             return
         current = self._find(self.discover(), ref)
@@ -226,10 +242,16 @@ class PiPluginAdapter(CommandPluginAdapter):
         )
 
     def remove_args(self, ref: PluginRef) -> tuple[str, ...]:
+        route = ref.native_ref
+        if route.startswith("local/"):
+            matches = [item for item in self.discover() if item.ref == ref]
+            if len(matches) != 1 or matches[0].runtime_root is None:
+                raise UnsupportedNativeOperation("local package routing is unresolved or ambiguous")
+            route = str(matches[0].runtime_root)
         return (
             "pi",
             "remove",
-            ref.native_ref,
+            route,
             *(("--local",) if ref.scope is Scope.PROJECT else ()),
             self._trust_flag(ref.scope),
         )
@@ -246,7 +268,7 @@ class PiPluginAdapter(CommandPluginAdapter):
         )
 
     def update(self, ref: PluginRef) -> PluginLifecycleResult:
-        self._validate(ref, "update")
+        self.preflight(ref, "update")
         if ref.scope is Scope.PROJECT:
             records = self.discover()
             if any(
@@ -315,7 +337,7 @@ class PiPluginAdapter(CommandPluginAdapter):
                             self.agent,
                             canonical,
                             scope,
-                            native_ref.split(":", 1)[0] if ":" in native_ref else None,
+                            None if canonical.startswith("local/") else native_ref.split(":", 1)[0] if ":" in native_ref else None,
                         ),
                         canonical.removeprefix("npm:").rsplit("/", 1)[-1],
                         True,

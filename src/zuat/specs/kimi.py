@@ -71,3 +71,7 @@ class KimiResolver:
 
     def plugin_adapter(self):
         return self._support.plugins(self._support.bind(self._support.state_root or self.home))
+
+    def bundle_adapter(self):
+        """Kimi has no supported native plugin formation/bootstrap contract."""
+        return None

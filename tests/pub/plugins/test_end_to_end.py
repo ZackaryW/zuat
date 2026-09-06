@@ -2,7 +2,8 @@ import json
 import pytest
 
 from tests.specs.plugins.test_pi_revisions import PiManager
-from zuat.pub import Zuat, ZuatRequest, AssetSelector, ArtifactExtension, PluginRef
+from zuat.pub import Zuat, ZuatRequest, AssetSelector, PluginRef
+from zuat import pub
 from zuat.specs.pi import PiResolver
 from zuat.specs.pi_plugins import PiPluginAdapter
 from zuat.utils.ownership import OwnershipStore
@@ -25,18 +26,25 @@ def test_public_plugin_profile_restart_and_policy_exclude_payloads(tmp_path, ava
     adapter = PiPluginAdapter(home=home, store=OwnershipStore(root / ".git/zuat/native", "pi"), runner=runner)
     resolver = PiResolver(home=home, plugins=adapter)
     ref = PluginRef("pi", "npm:@team/review")
-    extension = ArtifactExtension("prompts", "1", lambda context: (context.runtime_root / "prompts/review.md",))
+    class Prompts(pub.ZuatExtension):
+        identifier = "prompts"
+        version = "1"
+
+        def locate_artifacts(self, context):
+            return (context.runtime_root / "prompts/review.md",)
+
+    extension = Prompts()
     with Zuat(root=root, home=home, resolvers={"pi": resolver}) as service:
         assert service.install_plugin(ref).ok
         assert service.adopt_all(AssetSelector("pi", provider="global")).ok
         assert service.create_profile(ZuatRequest(agents=("pi",), profile="original")).ok
-        service.register_artifact(extension)
+        service.register_extension(extension)
         assert service.set_artifact_policy(ref, "prompts", "disabled").ok
         updated = service.update_plugin(ref)
         assert updated.ok, updated.diagnostics
         assert runner.version == "2.0.0"
     with Zuat(root=root, home=home, resolvers={"pi": resolver}) as service:
-        service.register_artifact(extension)
+        service.register_extension(extension)
         assert service.artifact_status(ref, "prompts").policy == "disabled"
         if not available:
             runner.available.remove("1.0.0")

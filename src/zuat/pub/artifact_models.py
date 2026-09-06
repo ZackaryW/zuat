@@ -2,10 +2,8 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from zuat.specs.native import PluginRef, PluginRevision
-from zuat.utils.plugin_state import metadata_identifier
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,21 +13,6 @@ class PluginArtifactContext:
     ref: PluginRef
     revision: PluginRevision | None
     runtime_root: Path
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactExtension:
-    """Host locator code registered at runtime, outside the plugin revision trail."""
-
-    identifier: str
-    version: str
-    locate: Callable[[PluginArtifactContext], tuple[Path, ...]]
-
-    def __post_init__(self):
-        metadata_identifier(self.identifier)
-        metadata_identifier(self.version)
-        if not callable(self.locate):
-            raise ValueError("artifact locator must be callable")
 
 
 @dataclass(frozen=True, slots=True)
