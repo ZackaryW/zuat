@@ -4,24 +4,37 @@ from dataclasses import replace
 
 from zuat.gitcore import Authority, OperationKind, OperationOutcome, RegistryError
 from zuat.pub.models import OperationResult, OperationStatus
+from zuat.pub.results import failed
 from zuat.specs.interface import ResolutionError
 from zuat.specs.native import (
+    InvalidAssetError,
+    PluginOperationError,
     PluginRef,
     PluginRevision,
-    PluginOperationError,
     UnsupportedNativeOperation,
-    InvalidAssetError,
 )
+from zuat.utils.evidence import absent_evidence
 from zuat.utils.plugin_pointers import pointer_fingerprint
 
 
 class PluginOperations:
+    """Coordinate native plugin managers without taking ownership of plugin bodies.
+
+    Resolvers own manager-specific commands. This layer persists only revision
+    pointers and checks the selected installation plus its neighbors.
+    """
+
     def __init__(self, service):
         self.service = service
 
     def discover(
         self, agent: str, *, include_available: bool = False
     ) -> OperationResult:
+        """Combine manager records and journal observation under one registry lock.
+
+        Preserve incomplete inventory as uncertainty; an unavailable manager is not
+        proof that installed plugins or their contributions disappeared.
+        """
         service = self.service
         try:
             with service.registry.operation():
@@ -29,7 +42,7 @@ class PluginOperations:
                 records = adapter.discover(include_available=include_available)
                 diagnostics = tuple(getattr(adapter, "discovery_diagnostics", ()))
                 observed, event, completeness, observation_diagnostics = (
-                    service._observe((agent,))
+                    service._observations.observe((agent,))
                 )
                 diagnostics = tuple(
                     dict.fromkeys((*diagnostics, *observation_diagnostics))
@@ -66,9 +79,7 @@ class PluginOperations:
                 reason = "malformed-inventory"
             else:
                 reason = "discovery-failed"
-            return replace(
-                service._failed("plugin-discover", reason), data={"reason": reason}
-            )
+            return replace(failed("plugin-discover", reason), data={"reason": reason})
 
     def mutate(
         self,
@@ -78,6 +89,13 @@ class PluginOperations:
         trust: bool = False,
         force: bool = False,
     ) -> OperationResult:
+        """Bracket a native manager call with pointer observation and durable intent.
+
+        Preflight and trust checks precede the marker; afterwards even command
+        failure may mean native state changed. Publish pointers only after both the
+        target revision and unaffected neighbors verify, otherwise retain recovery.
+        Raw manager diagnostics and runtime paths must not enter durable history.
+        """
         service = self.service
         registry = service.registry
         kind = {
@@ -95,7 +113,9 @@ class PluginOperations:
                 if operation == "install":
                     adapter.validate_install(ref, trust=trust)
                 selected_ref = adapter.contextual_ref(ref)
-                observed, _, completeness, _ = service._observe((ref.agent.value,))
+                observed, _, completeness, _ = service._observations.observe(
+                    (ref.agent.value,)
+                )
                 before = tuple(
                     item
                     for item in observed
@@ -144,6 +164,8 @@ class PluginOperations:
                 try:
                     durable_ref = selected_ref.to_dict()
                 except InvalidAssetError:
+                    # A runtime source may be usable without being safe to persist.
+                    # Keep context/intent, never fall back to serializing its path.
                     durable_ref = None
                 intended = (
                     PluginRevision(
@@ -169,7 +191,9 @@ class PluginOperations:
                     if operation == "install"
                     else getattr(adapter, operation)(ref)
                 )
-                observed, _, completeness, _ = service._observe((ref.agent.value,))
+                observed, _, completeness, _ = service._observations.observe(
+                    (ref.agent.value,)
+                )
                 after = tuple(
                     item
                     for item in observed
@@ -182,6 +206,8 @@ class PluginOperations:
                     and item.present
                 )
                 verified = (
+                    # Manager success alone is insufficient: validate rediscovery
+                    # and neighbors before publishing the new desired pointer.
                     result.verified
                     and completeness == "complete"
                     and neighbors(observed) == other_before
@@ -216,7 +242,7 @@ class PluginOperations:
                     else OperationOutcome.INDETERMINATE
                 )
                 if operation == "remove" and not after:
-                    after = tuple(service._absent_evidence(item) for item in before)
+                    after = tuple(absent_evidence(item) for item in before)
                 event = registry.append_event(
                     kind,
                     outcome,
@@ -278,9 +304,15 @@ class PluginOperations:
                     completeness="indeterminate",
                     diagnostics=(safe,),
                 )
-            return service._failed("plugin-" + operation, safe)
+            return failed("plugin-" + operation, safe)
 
     def recover(self):
+        """Observe an interrupted manager call rather than replay its side effects.
+
+        Require the original project before discovery. A complete rediscovery can
+        release the marker but cannot retroactively certify the interrupted command,
+        so the recovery event still reports an indeterminate outcome.
+        """
         service = self.service
         registry = service.registry
         with registry.operation():
@@ -303,7 +335,7 @@ class PluginOperations:
                 ref.get("context") not in {None, project_context(service.project_root)}
                 for ref in refs
             ):
-                return service._failed(
+                return failed(
                     "plugin-recovery", "recovery requires the original project context"
                 )
             agents = tuple(
@@ -317,10 +349,8 @@ class PluginOperations:
                 )
             )
             if not agents:
-                return service._failed(
-                    "plugin-recovery", "recovery has no agent context"
-                )
-            observed, _, completeness, _ = service._observe(agents)
+                return failed("plugin-recovery", "recovery has no agent context")
+            observed, _, completeness, _ = service._observations.observe(agents)
             targets = {item.ref.id for item in before}
             after = tuple(
                 item

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from zuat.specs.native import PluginLifecycleResult, PluginRecord, PluginRef
+    from zuat.utils.inspection import TargetInspection
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +162,16 @@ class Materialization:
 @runtime_checkable
 class AgentResolver(Protocol):
     agent: str
+
+    def inspect_asset(self, source: Path, kind: AssetKind, scope: str, *, name: str | None = None, locator: str | None = None) -> TargetInspection: ...
+
+    def resolve_asset_source(self, source: Path, kind: AssetKind, scope: str) -> Asset: ...
+
+    def capture_asset(self, target: TargetInspection, output: Path) -> None: ...
+
+    def replace_asset(self, target: TargetInspection) -> None: ...
+
+    def restore_asset_ownership(self, asset: Asset, ownership: dict[str, object] | None) -> None: ...
 
     def observe(self, registry_root: Path) -> Observation: ...
 

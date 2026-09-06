@@ -20,9 +20,14 @@ class OwnershipRecord:
     destination: str
     fingerprint: str
     fragment: object | None = None
+    native_locator: str | None = None
 
     def __post_init__(self) -> None:
         Scope(self.scope)
+        if not isinstance(self.destination, str) or not self.destination:
+            raise ValueError("ownership destination must be a nonempty path")
+        if self.native_locator is not None and not isinstance(self.native_locator, str):
+            raise ValueError("ownership locator must be text")
 
 
 class OwnershipStore:

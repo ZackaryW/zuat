@@ -35,6 +35,26 @@ class ClaudeResolver:
     def observe(self, registry_root: Path) -> Observation:
         return self._support.observe(registry_root)
 
+    def inspect_asset(self, source, kind, scope, *, name=None, locator=None):
+        from zuat.utils.inspection import inspect_target
+        return inspect_target(self._support, source, kind, scope, name=name, locator=locator)
+
+    def resolve_asset_source(self, source, kind, scope):
+        from zuat.utils.inspection import resolve_source
+        return resolve_source(self._support, source, kind, scope)[0]
+
+    def capture_asset(self, target, output):
+        from zuat.utils.inspection import capture_target
+        return capture_target(self._support, target, output)
+
+    def replace_asset(self, target):
+        from zuat.utils.inspection import replace_target
+        return replace_target(self._support, target)
+
+    def restore_asset_ownership(self, asset, ownership):
+        from zuat.utils.inspection import restore_receipt
+        return restore_receipt(self._support, asset, ownership)
+
     def fingerprint(self, path: Path, kind) -> str:
         return self._support.fingerprint(path, kind)
 

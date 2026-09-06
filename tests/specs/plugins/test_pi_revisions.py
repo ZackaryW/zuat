@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from test_plugin_adapters import adapter
+from tests.specs.plugins.test_adapters import adapter
 from zuat.specs.pi_plugins import PiPluginAdapter
 from zuat.specs.native import PluginRecord, PluginRef, PluginOperationError
 from zuat.utils.process import ProcessResult

@@ -3,24 +3,56 @@
 from __future__ import annotations
 
 from pathlib import Path
-from zuat.pub.artifact_models import ArtifactExtension, ArtifactStatus, PluginArtifactContext
-from zuat.specs.native import PluginRef, PluginRecord, PluginRevision, PluginContribution
 
-from zuat.gitcore.models import AssetEvidence, AssetRef, Authority, JournalEvent, Profile
+from zuat.gitcore.models import (
+    AssetEvidence,
+    AssetRef,
+    Authority,
+    JournalEvent,
+    Profile,
+)
+from zuat.pub.artifact_models import (
+    ArtifactExtension,
+    ArtifactStatus,
+    PluginArtifactContext,
+)
 from zuat.pub.models import (
+    SUPPORTED_AGENTS,
     AssetInput,
+    AssetInspection,
     AssetSelector,
     OperationResult,
     OperationStatus,
-    SUPPORTED_AGENTS,
     ZuatRequest,
+)
+from zuat.specs.native import (
+    PluginContribution,
+    PluginRecord,
+    PluginRef,
+    PluginRevision,
 )
 
 
-def _call(method: str, request: object, *, root: str | Path | None = None, **kwargs):
+def _call(
+    method: str,
+    request: object,
+    *,
+    root: str | Path | None = None,
+    home=None,
+    project_root=None,
+    trust_project=False,
+    **kwargs,
+):
+    """Open a short-lived service with the same explicit context as stateful callers.
+
+    Import lazily so importing public types does not initialize Git or adapters;
+    the context manager closes resources even when dispatch raises.
+    """
     from zuat.pub.service import Zuat
 
-    with Zuat(root=root) as service:
+    with Zuat(
+        root=root, home=home, project_root=project_root, trust_project=trust_project
+    ) as service:
         return getattr(service, method)(request, **kwargs)
 
 
@@ -37,8 +69,21 @@ def _selector(
     version: str | None = None,
     name: str | None = None,
 ) -> AssetSelector:
+    """Reject mixed selection styles rather than silently overriding caller filters."""
     if selector is not None:
-        if any(value is not None for value in (agent, kind, scope, authority, provider, plugin_id, version, name)):
+        if any(
+            value is not None
+            for value in (
+                agent,
+                kind,
+                scope,
+                authority,
+                provider,
+                plugin_id,
+                version,
+                name,
+            )
+        ):
             raise ValueError("pass either selector or keyword filters, not both")
         if present is not True:
             raise ValueError("pass either selector or keyword filters, not both")
@@ -49,11 +94,15 @@ def _selector(
         scope=scope,
         authority=Authority(authority) if authority is not None else None,
         present=present,
-        provider=provider, plugin_id=plugin_id, version=version, name=name,
+        provider=provider,
+        plugin_id=plugin_id,
+        version=version,
+        name=name,
     )
 
 
 def __getattr__(name: str):
+    """Load the stateful facade only on demand, keeping public type imports light."""
     if name == "Zuat":
         from zuat.pub.service import Zuat
 
@@ -61,8 +110,46 @@ def __getattr__(name: str):
     raise AttributeError(name)
 
 
-def status(request: ZuatRequest = ZuatRequest(), *, root: str | Path | None = None):
-    return _call("status", request, root=root)
+def status(
+    request: ZuatRequest = ZuatRequest(), *, root: str | Path | None = None, **context
+):
+    """Observe selected agents, or report unresolved update intent before observation."""
+    return _call("status", request, root=root, **context)
+
+
+def inspect_asset(
+    asset: AssetInput, *, root=None, home=None, project_root=None, trust_project=False
+):
+    """Compare source and native state without adoption; forward explicit runtime context."""
+    return _call(
+        "inspect_asset",
+        asset,
+        root=root,
+        home=home,
+        project_root=project_root,
+        trust_project=trust_project,
+    )
+
+
+def update_asset(
+    asset: AssetInput,
+    *,
+    force=False,
+    root=None,
+    home=None,
+    project_root=None,
+    trust_project=False,
+):
+    """Update one existing independent asset with verified, restorable before-state."""
+    return _call(
+        "update_asset",
+        asset,
+        force=force,
+        root=root,
+        home=home,
+        project_root=project_root,
+        trust_project=trust_project,
+    )
 
 
 def list_assets(
@@ -78,7 +165,9 @@ def list_assets(
     version: str | None = None,
     name: str | None = None,
     root: str | Path | None = None,
+    **context,
 ):
+    """Observe assets matching the selector without granting ownership."""
     selected = _selector(
         selector,
         agent=agent,
@@ -86,9 +175,12 @@ def list_assets(
         scope=scope,
         authority=authority,
         present=present,
-        provider=provider, plugin_id=plugin_id, version=version, name=name,
+        provider=provider,
+        plugin_id=plugin_id,
+        version=version,
+        name=name,
     )
-    return _call("list_assets", selected, root=root)
+    return _call("list_assets", selected, root=root, **context)
 
 
 def adopt_all(
@@ -105,7 +197,9 @@ def adopt_all(
     name: str | None = None,
     force: bool = False,
     root: str | Path | None = None,
+    **context,
 ):
+    """Adopt selected present assets through one recoverable install operation."""
     selected = _selector(
         selector,
         agent=agent,
@@ -113,9 +207,12 @@ def adopt_all(
         scope=scope,
         authority=authority,
         present=present,
-        provider=provider, plugin_id=plugin_id, version=version, name=name,
+        provider=provider,
+        plugin_id=plugin_id,
+        version=version,
+        name=name,
     )
-    return _call("adopt_all", selected, root=root, force=force)
+    return _call("adopt_all", selected, root=root, force=force, **context)
 
 
 def uninstall_all(
@@ -132,7 +229,9 @@ def uninstall_all(
     name: str | None = None,
     force: bool = False,
     root: str | Path | None = None,
+    **context,
 ):
+    """Remove selected present assets through one recoverable operation."""
     selected = _selector(
         selector,
         agent=agent,
@@ -140,9 +239,12 @@ def uninstall_all(
         scope=scope,
         authority=authority,
         present=present,
-        provider=provider, plugin_id=plugin_id, version=version, name=name,
+        provider=provider,
+        plugin_id=plugin_id,
+        version=version,
+        name=name,
     )
-    return _call("uninstall_all", selected, root=root, force=force)
+    return _call("uninstall_all", selected, root=root, force=force, **context)
 
 
 def restore_all(
@@ -160,7 +262,9 @@ def restore_all(
     name: str | None = None,
     force: bool = False,
     root: str | Path | None = None,
+    **context,
 ):
+    """Restore selected before-state assets, preserving unrelated later additions."""
     selected = _selector(
         selector,
         agent=agent,
@@ -168,7 +272,10 @@ def restore_all(
         scope=scope,
         authority=authority,
         present=present,
-        provider=provider, plugin_id=plugin_id, version=version, name=name,
+        provider=provider,
+        plugin_id=plugin_id,
+        version=version,
+        name=name,
     )
     return _call(
         "restore_all",
@@ -176,85 +283,142 @@ def restore_all(
         root=root,
         selector=selected,
         force=force,
+        **context,
     )
 
 
-def install(request: ZuatRequest, *, root: str | Path | None = None):
-    return _call("install", request, root=root)
+def install(request: ZuatRequest, *, root: str | Path | None = None, **context):
+    """Install explicit inputs or adopt references through the selected profile."""
+    return _call("install", request, root=root, **context)
 
 
-def uninstall(request: ZuatRequest, *, root: str | Path | None = None):
-    return _call("uninstall", request, root=root)
+def uninstall(request: ZuatRequest, *, root: str | Path | None = None, **context):
+    """Remove explicit references, requiring force for conflicting or unowned state."""
+    return _call("uninstall", request, root=root, **context)
 
 
-def profiles(request: ZuatRequest = ZuatRequest(), *, root: str | Path | None = None):
-    return _call("profiles", request, root=root)
+def profiles(
+    request: ZuatRequest = ZuatRequest(), *, root: str | Path | None = None, **context
+):
+    """List named desired profiles without claiming native application."""
+    return _call("profiles", request, root=root, **context)
 
 
-def create_profile(request: ZuatRequest, *, root: str | Path | None = None):
-    return _call("create_profile", request, root=root)
+def create_profile(request: ZuatRequest, *, root: str | Path | None = None, **context):
+    """Record a named profile after preserving current observed drift."""
+    return _call("create_profile", request, root=root, **context)
 
 
-def switch_profile(request: ZuatRequest, *, root: str | Path | None = None):
-    return _call("switch_profile", request, root=root)
+def switch_profile(request: ZuatRequest, *, root: str | Path | None = None, **context):
+    """Reconcile a profile through native resolvers before publishing its selection."""
+    return _call("switch_profile", request, root=root, **context)
 
 
-def history(request: ZuatRequest = ZuatRequest(), *, root: str | Path | None = None):
-    return _call("history", request, root=root)
+def history(
+    request: ZuatRequest = ZuatRequest(), *, root: str | Path | None = None, **context
+):
+    """Return domain history without exposing the private Git tracking mechanism."""
+    return _call("history", request, root=root, **context)
 
 
-def revert(request: ZuatRequest, *, root: str | Path | None = None):
-    return _call("revert", request, root=root)
+def revert(request: ZuatRequest, *, root: str | Path | None = None, **context):
+    """Append an inverse of a successful operation; never reset or erase history."""
+    return _call("revert", request, root=root, **context)
 
 
-def _plugin_call(method, *args, root=None, home=None, project_root=None, trust_project=False, **kwargs):
+def _plugin_call(
+    method,
+    *args,
+    root=None,
+    home=None,
+    project_root=None,
+    trust_project=False,
+    **kwargs,
+):
+    """Dispatch runtime plugin/artifact calls with one short-lived service context.
+
+    Unlike request-based asset operations, these methods accept domain values;
+    keep resource lifetime and explicit context forwarding identical to _call.
+    """
     from zuat.pub.service import Zuat
-    with Zuat(root=root, home=home, project_root=project_root, trust_project=trust_project) as service:
+
+    with Zuat(
+        root=root, home=home, project_root=project_root, trust_project=trust_project
+    ) as service:
         return getattr(service, method)(*args, **kwargs)
 
 
 def discover_plugins(agent, *, include_available=False, **context):
-    return _plugin_call("discover_plugins", agent, include_available=include_available, **context)
+    """Discover native revisions and contribution pointers, not copied plugin sources."""
+    return _plugin_call(
+        "discover_plugins", agent, include_available=include_available, **context
+    )
 
 
 def install_plugin(ref, *, trust=False, force=False, **context):
+    """Install through the native manager with explicit trust for non-catalog sources."""
     return _plugin_call("install_plugin", ref, trust=trust, force=force, **context)
 
 
 def update_plugin(ref, *, force=False, **context):
+    """Update through the native manager while preserving recovery evidence."""
     return _plugin_call("update_plugin", ref, force=force, **context)
 
 
 def remove_plugin(ref, *, force=False, **context):
+    """Remove an entire native plugin installation, not its individual contributions."""
     return _plugin_call("remove_plugin", ref, force=force, **context)
 
 
 def register_artifact(extension):
+    """Register runtime locator code for subsequent services without journaling code."""
     from zuat.pub.artifacts import register_extension
+
     register_extension(extension)
 
 
 def resolve_artifacts(agent, identifier, **context):
+    """Return artifacts eligible under both native state and host selection policy."""
     return _plugin_call("resolve_artifacts", agent, identifier, **context)
 
 
 def artifact_status(ref, identifier, *, revision=None, **context):
-    return _plugin_call("artifact_status", ref, identifier, revision=revision, **context)
+    """Report eligibility for the current installation, optionally requiring a revision."""
+    return _plugin_call(
+        "artifact_status", ref, identifier, revision=revision, **context
+    )
 
 
 def set_artifact_policy(ref, identifier, policy, **context):
+    """Journal host artifact selection without modifying native plugin activation."""
     return _plugin_call("set_artifact_policy", ref, identifier, policy, **context)
 
 
 def clear_artifact_policy(ref, identifier, **context):
+    """Append inherited host policy rather than erasing its earlier decisions."""
     return _plugin_call("clear_artifact_policy", ref, identifier, **context)
 
 
 __all__ = [
-    "PluginRef", "PluginRecord", "PluginRevision", "PluginContribution",
-    "ArtifactExtension", "ArtifactStatus", "PluginArtifactContext",
-    "discover_plugins", "install_plugin", "update_plugin", "remove_plugin",
-    "register_artifact", "resolve_artifacts", "artifact_status", "set_artifact_policy", "clear_artifact_policy",
+    "AssetInspection",
+    "inspect_asset",
+    "update_asset",
+    "PluginRef",
+    "PluginRecord",
+    "PluginRevision",
+    "PluginContribution",
+    "ArtifactExtension",
+    "ArtifactStatus",
+    "PluginArtifactContext",
+    "discover_plugins",
+    "install_plugin",
+    "update_plugin",
+    "remove_plugin",
+    "register_artifact",
+    "resolve_artifacts",
+    "artifact_status",
+    "set_artifact_policy",
+    "clear_artifact_policy",
     "AssetEvidence",
     "AssetInput",
     "AssetSelector",

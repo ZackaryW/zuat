@@ -23,6 +23,7 @@ from zuat.utils.assets import collect_files, fingerprint
 from zuat.utils.mutation import atomic_write, mirror_files, remove_absent, remove_tree, replace_tree
 from zuat.utils.ownership import OwnershipRecord, OwnershipStore
 from zuat.utils.documents import remove_fragment_at_locator, replace_fragment_at_locator
+from zuat.utils.contexts import contextual_locator, scope_path
 
 
 def plugin_filename(native_ref: str) -> str:
@@ -54,9 +55,10 @@ def asset_metadata(path: Path, scope: Scope) -> dict[str, object]:
 
 
 def observe_skills(
-    *, agent: Agent, native_root: Path, registry_root: Path, scope: Scope, excluded_roots: tuple[Path, ...] = ()
+    *, agent: Agent, native_root: Path, registry_root: Path, scope: Scope, excluded_roots: tuple[Path, ...] = (), context: str | None = None
 ) -> tuple[list[Asset], list[str]]:
-    desired = registry_root / scope.value / "skills"
+    relative = scope_path(scope.value, context) / "skills"
+    desired = registry_root / relative
     assets: list[Asset] = []
     rejected: list[str] = []
     observed: set[str] = set()
@@ -75,7 +77,7 @@ def observe_skills(
                 rejected.append(f"skill {candidate.name}: {error}")
                 continue
             observed.add(skill.name)
-            assets.append(Asset(agent.value, AssetKind.SKILL, skill.name, Path(agent.value) / scope.value / "skills" / skill.name, scope.value, {"fingerprint": skill.fingerprint, "native_locator": f"skills/{skill.name}"}))
+            assets.append(Asset(agent.value, AssetKind.SKILL, skill.name, Path(agent.value) / relative / skill.name, scope.value, {"fingerprint": skill.fingerprint, "native_locator": contextual_locator(scope.value, f"skills/{skill.name}", context)}))
     remove_absent(desired, observed)
     return assets, rejected
 
@@ -87,8 +89,10 @@ def observe_extensions(
     registry_root: Path,
     hook_loader: Callable[[Path], HookSource],
     scope: Scope,
+    context: str | None = None,
 ) -> tuple[list[Asset], list[str]]:
-    desired = registry_root / scope.value / "hooks"
+    relative = scope_path(scope.value, context) / "hooks"
+    desired = registry_root / relative
     assets: list[Asset] = []
     rejected: list[str] = []
     observed: set[str] = set()
@@ -108,7 +112,7 @@ def observe_extensions(
                 rejected.append(f"extension {candidate.name}: {error}")
                 continue
             observed.add(candidate.name)
-            assets.append(Asset(agent.value, AssetKind.HOOK, hook.name, Path(agent.value) / scope.value / "hooks" / candidate.name, scope.value, {"fingerprint": hook.fingerprint, "format": hook.format, "native_locator": f"extensions/{candidate.name}"}))
+            assets.append(Asset(agent.value, AssetKind.HOOK, hook.name, Path(agent.value) / relative / candidate.name, scope.value, {"fingerprint": hook.fingerprint, "format": hook.format, "native_locator": contextual_locator(scope.value, f"extensions/{candidate.name}", context)}))
     remove_absent(desired, observed)
     return assets, rejected
 
@@ -123,8 +127,11 @@ def observe_shared_hooks(
     suffix: str,
     hook_loader: Callable[[Path], HookSource],
     scope: Scope,
+    context: str | None = None,
+    store: OwnershipStore | None = None,
 ) -> tuple[list[Asset], list[str]]:
-    desired = registry_root / scope.value / "hooks"
+    relative = scope_path(scope.value, context) / "hooks"
+    desired = registry_root / relative
     assets: list[Asset] = []
     rejected: list[str] = []
     observed: set[str] = set()
@@ -163,7 +170,33 @@ def observe_shared_hooks(
             )
     else:
         rejected.append("hooks: native hooks value has an unsupported shape")
+    if store:
+        from zuat.utils.inspection import fragment_parts, fragment_fingerprint, selected_fragment
+        groups = []
+        claimed = set()
+        for record in store.records("hook"):
+            if record.scope != scope.value or Path(record.destination) != native_path.resolve():
+                continue
+            try:
+                if len(fragment_parts(record.fragment)) <= 1:
+                    continue
+                actual = selected_fragment(document, record.fragment)
+                if actual is None:
+                    continue
+                keys = {fragment_fingerprint(part) for part in fragment_parts(actual)}
+                if claimed.intersection(keys):
+                    raise ResolutionError("ambiguous overlapping owned hook groups")
+                claimed.update(keys)
+                groups.append((record.name, actual, record.native_locator or f"hooks/{record.name}"))
+            except ResolutionError as error:
+                rejected.append(str(error))
+        fragments = [item for item in fragments if fragment_fingerprint(item[1]) not in claimed] + groups
     for name, fragment, native_locator in fragments:
+        matches = [record for record in store.records("hook") if record.scope == scope.value
+                   and Path(record.destination) == native_path.resolve() and record.fragment == fragment] if store else []
+        if len(matches) == 1:
+            name = matches[0].name
+            native_locator = matches[0].native_locator or native_locator
         filename = f"{name}{suffix}"
         output = desired / filename
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -174,17 +207,22 @@ def observe_shared_hooks(
             rejected.append(f"hook {native_locator}: {error}")
             continue
         observed.add(filename)
-        assets.append(Asset(agent.value, AssetKind.HOOK, name, Path(agent.value) / scope.value / "hooks" / filename, scope.value, {"fingerprint": source.fingerprint, "format": source.format, "native_locator": native_locator}))
+        assets.append(Asset(agent.value, AssetKind.HOOK, name, Path(agent.value) / relative / filename, scope.value, {"fingerprint": source.fingerprint, "format": source.format, "native_locator": contextual_locator(scope.value, native_locator, context)}))
     remove_absent(desired, observed)
     return assets, rejected
 
 
 def desired_assets(
-    *, agent: Agent, root: Path, hook_loader: Callable[[Path], HookSource]
+    *, agent: Agent, root: Path, hook_loader: Callable[[Path], HookSource], context: str | None = None
 ) -> list[Asset]:
     assets: list[Asset] = []
     for scope in Scope:
         scoped_root = root / scope.value
+        if scope is Scope.PROJECT:
+            for family in ("skills", "hooks"):
+                if any(path.name != ".gitkeep" for path in (scoped_root / family).glob("*")):
+                    raise ResolutionError("ambiguous context-free project profile; use a fresh registry")
+            scoped_root = root / scope_path(scope.value, context) if context else root / "project/no-selected-context"
         skills = scoped_root / "skills"
         if skills.is_dir():
             for path in sorted(skills.iterdir(), key=lambda value: value.name):
@@ -194,7 +232,7 @@ def desired_assets(
                 if agent not in source.compatible_agents:
                     raise ResolutionError(f"skill {source.name} is incompatible with {agent.value}")
                 metadata = asset_metadata(path, scope)
-                assets.append(Asset(agent.value, AssetKind.SKILL, source.name, path, scope.value, {"fingerprint": source.fingerprint, "native_locator": str(metadata.get("native_locator", f"skills/{source.name}"))}))
+                assets.append(Asset(agent.value, AssetKind.SKILL, source.name, path, scope.value, {"fingerprint": source.fingerprint, "native_locator": str(metadata.get("native_locator", f"skills/{source.name}")), "targeted": bool(metadata.get("targeted", False))}))
         hooks = scoped_root / "hooks"
         if hooks.is_dir():
             for path in sorted(hooks.iterdir(), key=lambda value: value.name):
@@ -202,8 +240,8 @@ def desired_assets(
                     continue
                 source = hook_loader(path)
                 metadata = asset_metadata(path, scope)
-                assets.append(Asset(agent.value, AssetKind.HOOK, source.name, path, scope.value, {"fingerprint": source.fingerprint, "native_locator": str(metadata.get("native_locator", f"hooks/{source.name}"))}))
-        plugins = scoped_root / "plugins"
+                assets.append(Asset(agent.value, AssetKind.HOOK, source.name, path, scope.value, {"fingerprint": source.fingerprint, "native_locator": str(metadata.get("native_locator", f"hooks/{source.name}")), "targeted": bool(metadata.get("targeted", False))}))
+        plugins = root / scope.value / "plugins"
         if plugins.is_dir():
             for path in sorted(plugins.glob("*.json")):
                 if path.name.endswith(".zuat.json"):
@@ -286,7 +324,7 @@ def apply_dedicated(
         return LifecycleResult("install", "adopted", destination, before, before)
     if before.status in {InspectionStatus.UNMANAGED, InspectionStatus.CONFLICT} and policy is ConflictPolicy.ABORT:
         raise NativeConflictError(f"{kind} destination is {before.status.value}: {destination}")
-    if source.path.is_file():
+    if source.path.is_file() and not isinstance(source, SkillSource):
         atomic_write(destination, source.files[0].content)
     else:
         replace_tree(destination, source.files)
@@ -388,7 +426,7 @@ def apply_shared_hook(
     if before.status is InspectionStatus.CURRENT and locator_matches:
         return LifecycleResult("install", "current", destination, before, before)
     if before.status is InspectionStatus.ADOPTABLE and locator_matches:
-        store.save(OwnershipRecord(store.agent, "hook", name, scope.value, str(destination.resolve()), source.fingerprint, source.fragment))
+        store.save(OwnershipRecord(store.agent, "hook", name, scope.value, str(destination.resolve()), source.fingerprint, source.fragment, native_locator))
         return LifecycleResult("install", "adopted", destination, before, before)
     if (
         before.status is InspectionStatus.CONFLICT or not locator_matches
@@ -425,6 +463,6 @@ def apply_shared_hook(
             raise NativeConflictError(
                 f"hook locator verification failed: {name}"
             ) from error
-    store.save(OwnershipRecord(store.agent, "hook", name, scope.value, str(destination.resolve()), source.fingerprint, source.fragment))
+    store.save(OwnershipRecord(store.agent, "hook", name, scope.value, str(destination.resolve()), source.fingerprint, source.fragment, native_locator))
     status = "installed" if before.status in {InspectionStatus.ABSENT, InspectionStatus.UNMANAGED} else "updated"
     return LifecycleResult("install", status, destination, before, Inspection(InspectionStatus.CURRENT, destination, source.fingerprint))

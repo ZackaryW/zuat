@@ -8,7 +8,7 @@ import os
 import shutil
 import threading
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from git import Actor, Git, Repo
@@ -124,26 +124,14 @@ class GitRegistry:
     @contextmanager
     def operation(self) -> Iterator[None]:
         """Serialize journal and native orchestration across processes."""
+        from zuat.gitcore.locking import registry_lock
         with self._mutex:
-            owns_file = self._depth == 0
-            if owns_file:
+            with registry_lock(self._lock_path) if self._depth == 0 else nullcontext():
+                self._depth += 1
                 try:
-                    descriptor = os.open(
-                        self._lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY
-                    )
-                except FileExistsError as error:
-                    raise RegistryLockedError(
-                        f"registry is locked: {self._lock_path}"
-                    ) from error
-                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                    stream.write(str(os.getpid()))
-            self._depth += 1
-            try:
-                yield
-            finally:
-                self._depth -= 1
-                if owns_file:
-                    self._lock_path.unlink(missing_ok=True)
+                    yield
+                finally:
+                    self._depth -= 1
 
     def projected_state(self) -> ProjectedState:
         selected = self._selected_profile()
@@ -283,7 +271,7 @@ class GitRegistry:
         metadata: dict[str, object] | None = None,
     ) -> JournalEvent:
         selected_kind = OperationKind(kind)
-        if selected_kind not in {OperationKind.INSTALL, OperationKind.UNINSTALL}:
+        if selected_kind not in {OperationKind.INSTALL, OperationKind.UPDATE, OperationKind.UNINSTALL}:
             raise RegistryError(f"not an asset lifecycle operation: {selected_kind}")
         selected_outcome = OperationOutcome(outcome)
         self.profile_root(profile)
@@ -456,7 +444,13 @@ class GitRegistry:
                     and isinstance(entry.get("normalized_path"), str)
                     else None
                 )
-            if item.present and item.authority is Authority.AUTHORITATIVE:
+            if item.present and item.evidence.get("owned_profile_fingerprint"):
+                baseline = str(item.evidence["owned_profile_fingerprint"])
+                if normalized is None:
+                    raise RegistryError("prior owned profile has no concrete path")
+                self.store_profile_asset(profile, item.ref, normalized, self.asset_payload(item.ref, baseline), baseline)
+                current.add(item.ref.id)
+            elif item.present and item.authority is Authority.AUTHORITATIVE:
                 if item.ref.id in current:
                     continue
                 if normalized is None:
@@ -599,6 +593,7 @@ class GitRegistry:
         )
 
     def latest_observation(self) -> tuple[AssetEvidence, ...]:
+        from zuat.utils.contexts import evidence_context
         retained: dict[str, AssetEvidence] = {}
         for event in self.history():
             if event.kind is not OperationKind.OBSERVE:
@@ -613,7 +608,7 @@ class GitRegistry:
                 retained = {
                     asset_id: item
                     for asset_id, item in retained.items()
-                    if item.ref.agent not in selected_agents or item.evidence.get("ref", {}).get("context") not in {None, event.metadata.get("observation_context")}
+                    if item.ref.agent not in selected_agents or evidence_context(item) not in {None, event.metadata.get("observation_context")}
                 }
             retained.update({item.ref.id: item for item in event.after})
         return tuple(retained[key] for key in sorted(retained))
@@ -650,7 +645,7 @@ class GitRegistry:
         """Keep uncertain plugin mutations pending for native rediscovery."""
         if self.recovery_marker.exists() and outcome is not OperationOutcome.SUCCESS:
             marker = self._read_json(self.recovery_marker)
-            if marker.get("metadata", {}).get("state_kind") == "plugin-lifecycle" or any(
+            if marker.get("metadata", {}).get("state_kind") in {"plugin-lifecycle", "asset-update"} or any(
                 item.get("kind") == "plugin" or item.get("evidence", {}).get("provider") == "plugin"
                 for item in marker.get("before", [])
             ):
@@ -669,7 +664,7 @@ class GitRegistry:
         if not self.recovery_marker.exists():
             return
         marker = self._read_json(self.recovery_marker)
-        if marker.get("metadata", {}).get("state_kind") == "plugin-lifecycle" or any(item.get("kind") == "plugin" for item in marker.get("before", [])):
+        if marker.get("metadata", {}).get("state_kind") in {"plugin-lifecycle", "asset-update"} or any(item.get("kind") == "plugin" for item in marker.get("before", [])):
             # Native plugin evidence can only be refreshed by orchestration.
             return
         try:
@@ -843,6 +838,12 @@ class GitRegistry:
     def _safe_profile_asset_path(cls, ref: AssetRef, path: str) -> str:
         normalized = cls._safe_locator(path)
         expected = f"{ref.agent}/{ref.scope}/"
+        from zuat.utils.contexts import locator_context, native_locator
+        if ref.scope == "project" and ref.kind != "plugin" and not native_locator(ref.locator).startswith("plugin-contributions/"):
+            context = locator_context(ref.locator)
+            if not context:
+                raise InvalidRegistryPathError("ambiguous context-free project asset; use a fresh registry")
+            expected += f"contexts/{context[:16]}/"
         if not normalized.startswith(expected):
             raise InvalidRegistryPathError(
                 f"profile asset path does not match its reference: {path}"

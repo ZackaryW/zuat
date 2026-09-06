@@ -102,7 +102,7 @@ def test_each_agent_module_owns_the_full_resolver_contract(
 
 
 def test_shared_utilities_do_not_switch_on_concrete_agent_identity() -> None:
-    utility_root = Path(__file__).parents[1] / "src/zuat/utils"
+    utility_root = Path(__file__).parents[2] / "src/zuat/utils"
     identities = (
         "Agent.CODEX",
         "Agent.CLAUDE",
@@ -285,7 +285,8 @@ def test_pi_rejects_extension_directory_without_native_entry_point(
 
 
 def test_kimi_project_hook_is_an_explicit_preflight_failure(tmp_path: Path) -> None:
-    hook = tmp_path / "profile/kimi/project/hooks/guard.toml"
+    from zuat.utils.contexts import project_context, scope_path
+    hook = tmp_path / "profile/kimi" / scope_path("project", project_context(tmp_path / "project")) / "hooks/guard.toml"
     hook.parent.mkdir(parents=True)
     hook.write_text(
         '[[hooks]]\nevent = "Stop"\ncommand = "echo ok"\n', encoding="utf-8"
@@ -332,7 +333,8 @@ def test_each_agent_owns_project_skill_destination(
     agent: str, destination: str, tmp_path: Path
 ) -> None:
     profile = tmp_path / "profile"
-    desired = profile / agent / "project/skills/reviewer"
+    from zuat.utils.contexts import project_context, scope_path
+    desired = profile / agent / scope_path("project", project_context(tmp_path / "project")) / "skills/reviewer"
     desired.mkdir(parents=True)
     (desired / "SKILL.md").write_text(SKILL, encoding="utf-8")
     project = tmp_path / "project"

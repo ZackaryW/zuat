@@ -35,6 +35,7 @@ from zuat.utils.mutation import atomic_write, remove_absent
 from zuat.utils.ownership import OwnershipStore
 from zuat.utils.results import materialize_plan
 from zuat.utils.plugin_pointers import read_pointer, write_pointer, pointer_fingerprint, evidence_pointer
+from zuat.utils.contexts import project_context, native_locator, contextual_locator
 
 
 class ResolverSupport:
@@ -67,6 +68,7 @@ class ResolverSupport:
         self.agent = agent
         self.home = Path(home).expanduser().resolve() if home is not None else Path.home().resolve()
         self.project_root = Path(project_root).resolve() if project_root is not None else None
+        self.context = project_context(self.project_root)
         self.state_root = Path(state_root).resolve() if state_root is not None else None
         self.skills = self.home / skills
         self.hooks = self.home / hooks
@@ -124,6 +126,7 @@ class ResolverSupport:
                     registry_root=root,
                     scope=scope,
                     excluded_roots=plugin_roots,
+                    context=self.context,
                 )
                 skills.extend(found)
                 rejected.extend(failures)
@@ -135,11 +138,13 @@ class ResolverSupport:
                     agent=self.agent,
                     registry_root=root,
                     read_document=self.read_document,
+                    store=self.ordinary_store(store, scope),
                     native_path=hook_root,
                     serialize_fragment=self.serialize_fragment,
                     suffix=self.hook_suffix,
                     hook_loader=self.hook_loader,
                     scope=scope,
+                    context=self.context,
                 )
             else:
                 found, failures = observe_extensions(
@@ -148,6 +153,7 @@ class ResolverSupport:
                     registry_root=root,
                     hook_loader=self.hook_loader,
                     scope=scope,
+                    context=self.context,
                 )
             hooks.extend(found)
             hook_rejections.extend(failures)
@@ -204,10 +210,10 @@ class ResolverSupport:
     def plan(self, desired_root: Path, conflict_policy: ConflictPolicy) -> ResolutionPlan:
         root = Path(desired_root) / self.agent.value
         store = self.bind(Path(desired_root))
-        desired = desired_assets(agent=self.agent, root=root, hook_loader=self.hook_loader)
+        desired = desired_assets(agent=self.agent, root=root, hook_loader=self.hook_loader, context=self.context)
         from zuat.utils.contexts import project_context
         context = project_context(self.project_root)
-        records = store.for_context(context).records("plugin") if context else ()
+        records = store.for_context(context).records() if context else ()
         return build_plan(agent=self.agent, root=root, desired=desired, store=store, conflict_policy=conflict_policy, additional_records=records)
 
     def preflight(self, plan: ResolutionPlan) -> None:
@@ -228,7 +234,17 @@ class ResolverSupport:
                 continue
             if scope not in self.scopes:
                 raise UnsupportedNativeOperation(f"{self.agent.value} does not support {scope.value} scope")
-            record = store.load(asset.kind.value, asset.name, scope.value)
+            locator = asset.evidence.get("native_locator")
+            if scope is Scope.PROJECT and isinstance(locator, str):
+                contextual_locator(scope.value, locator, self.context)
+            selected_store = self.ordinary_store(store, scope)
+            if asset.evidence.get("targeted"):
+                from zuat.utils.inspection import inspect_target
+                target = inspect_target(self, asset.path, asset.kind, asset.scope, name=asset.name)
+                if target.classification in {"conflict", "unowned"} and plan.conflict_policy is ConflictPolicy.ABORT:
+                    raise ResolutionError("force is required for conflicting or unowned replacement")
+                continue
+            record = selected_store.load(asset.kind.value, asset.name, scope.value)
             destination = self._destination(asset, scope)
             if action.operation == "remove":
                 if record is None and plan.conflict_policy is ConflictPolicy.ABORT:
@@ -237,7 +253,7 @@ class ResolverSupport:
             source = SkillSource.from_path(asset.path) if asset.kind is AssetKind.SKILL else self.hook_loader(asset.path)
             if asset.kind is AssetKind.HOOK and self.shared_hooks:
                 assert self.read_document and self.contains
-                inspection = inspect_shared_hook(source=source, destination=destination, store=store, read_document=self.read_document, contains=self.contains, scope=scope)
+                inspection = inspect_shared_hook(source=source, destination=destination, store=selected_store, read_document=self.read_document, contains=self.contains, scope=scope)
             else:
                 inspection = inspect_dedicated(source, destination, record)
             if inspection.status.value in {"unmanaged", "conflict"} and plan.conflict_policy is ConflictPolicy.ABORT:
@@ -286,7 +302,9 @@ class ResolverSupport:
             selected = self.project_skills if asset.kind is AssetKind.SKILL else self.project_hooks
             if selected is None:
                 raise UnsupportedNativeOperation(f"{self.agent.value} native {asset.kind.value} project scope requires a project root")
-            return selected / asset.name if asset.kind is AssetKind.SKILL or not self.shared_hooks else selected
+            if asset.kind is AssetKind.SKILL:
+                return selected / asset.name
+            return selected if self.shared_hooks else selected / asset.path.name
         if scope is not Scope.USER:
             raise UnsupportedNativeOperation(f"{self.agent.value} does not support native {asset.kind.value} scope {scope.value}")
         if asset.kind is AssetKind.SKILL:
@@ -295,6 +313,14 @@ class ResolverSupport:
             return self.hooks
         return self.hooks / asset.path.name
 
+    def ordinary_store(self, store: OwnershipStore, scope: Scope) -> OwnershipStore:
+        if scope is Scope.PROJECT:
+            contextual_locator(scope.value, "assets", self.context)
+            if any(record.scope == "project" and record.kind != "plugin" for record in store.records()):
+                raise ResolutionError("ambiguous context-free project ownership; use a fresh registry")
+            return store.for_context(self.context)
+        return store
+
     def _apply(self, plan: ResolutionPlan, action: PlannedAction):
         asset = action.asset
         scope = Scope(asset.scope)
@@ -302,6 +328,14 @@ class ResolverSupport:
         if asset.kind is AssetKind.PLUGIN:
             record = evidence_pointer(asset.evidence)
             return self.plugins(store).remove(record.ref) if action.operation == "remove" else self.plugins(store).reconcile(record)
+        store = self.ordinary_store(store, scope)
+        if asset.evidence.get("targeted"):
+            from zuat.utils.inspection import inspect_target, replace_target
+            from zuat.specs.native import LifecycleResult
+            target = inspect_target(self, asset.path, asset.kind, asset.scope, name=asset.name)
+            if target.classification != "absent":
+                replace_target(self, target)
+                return LifecycleResult("install", "updated", target.destination)
         destination = self._destination(asset, scope)
         source = None
         if action.operation != "remove" or (
@@ -312,6 +346,6 @@ class ResolverSupport:
             source = SkillSource.from_path(asset.path) if asset.kind is AssetKind.SKILL else self.hook_loader(asset.path)
         if asset.kind is AssetKind.HOOK and self.shared_hooks:
             assert self.read_document and self.write_document and self.contains and self.add and self.remove
-            native_locator = asset.evidence.get("native_locator")
-            return apply_shared_hook(operation=action.operation, source=source, destination=destination, store=store, name=asset.name, scope=scope, policy=plan.conflict_policy, read_document=self.read_document, write_document=self.write_document, contains=self.contains, add=self.add, remove=self.remove, native_locator=native_locator if isinstance(native_locator, str) else None)
+            locator = asset.evidence.get("native_locator")
+            return apply_shared_hook(operation=action.operation, source=source, destination=destination, store=store, name=asset.name, scope=scope, policy=plan.conflict_policy, read_document=self.read_document, write_document=self.write_document, contains=self.contains, add=self.add, remove=self.remove, native_locator=native_locator(locator) if isinstance(locator, str) else None)
         return apply_dedicated(operation=action.operation, source=source, destination=destination, store=store, kind=asset.kind.value, name=asset.name, scope=scope, policy=plan.conflict_policy)

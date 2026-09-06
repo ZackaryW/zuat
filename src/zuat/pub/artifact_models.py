@@ -10,6 +10,8 @@ from zuat.utils.plugin_state import metadata_identifier
 
 @dataclass(frozen=True, slots=True)
 class PluginArtifactContext:
+    """Transient installed-revision context passed to a host locator, not journaled."""
+
     ref: PluginRef
     revision: PluginRevision | None
     runtime_root: Path
@@ -17,6 +19,8 @@ class PluginArtifactContext:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactExtension:
+    """Host locator code registered at runtime, outside the plugin revision trail."""
+
     identifier: str
     version: str
     locate: Callable[[PluginArtifactContext], tuple[Path, ...]]
@@ -30,6 +34,8 @@ class ArtifactExtension:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactStatus:
+    """Eligibility evidence; returned paths are runtime values, not durable sources."""
+
     ref: PluginRef
     identifier: str
     policy: str = "inherit"

@@ -11,15 +11,16 @@ from zuat.pub.artifact_models import (
     PluginArtifactContext,
 )
 from zuat.pub.models import OperationResult, OperationStatus
+from zuat.pub.results import failed
 from zuat.specs.interface import ResolutionError
-from zuat.utils.runtime_paths import contained_path
 from zuat.utils.contexts import project_context
-
+from zuat.utils.runtime_paths import contained_path
 
 _registered: dict[str, ArtifactExtension] = {}
 
 
 def register_extension(extension):
+    """Register process-wide locator code without serializing it into history."""
     if (
         extension.identifier in _registered
         and _registered[extension.identifier] != extension
@@ -29,11 +30,18 @@ def register_extension(extension):
 
 
 class ArtifactOperations:
+    """Resolve runtime artifacts while journaling only host selection policy.
+
+    Paths and locator callables remain runtime values, not plugin source payloads
+    or durable assertions that a native installation is active.
+    """
+
     def __init__(self, service):
         self.service = service
         self.extensions: dict[str, ArtifactExtension] = dict(_registered)
 
     def register(self, extension: ArtifactExtension):
+        """Register a locator on this service; reject conflicting code for one ID."""
         if (
             extension.identifier in self.extensions
             and self.extensions[extension.identifier] != extension
@@ -42,6 +50,11 @@ class ArtifactOperations:
         self.extensions[extension.identifier] = extension
 
     def _key(self, ref, identifier):
+        """Bind policy to installation context rather than a plugin name alone.
+
+        The same plugin can be installed in two projects; one project's host policy
+        must not enable or disable artifacts in the other.
+        """
         context = (
             project_context(self.service.project_root)
             if ref.scope in {"project", "local"}
@@ -60,6 +73,7 @@ class ArtifactOperations:
         ).hexdigest()
 
     def _policy(self, ref, identifier):
+        """Replay the latest policy event instead of maintaining a second policy store."""
         key = self._key(ref, identifier)
         for event in reversed(self.service.registry.history()):
             if (
@@ -70,6 +84,11 @@ class ArtifactOperations:
         return "inherit"
 
     def status(self, ref, identifier, *, revision=None):
+        """Gate host artifact eligibility on current native installation evidence.
+
+        An enabled host policy cannot override native disablement or a stale revision.
+        Resolve paths only after these checks, and enforce runtime-root containment.
+        """
         result = ArtifactStatus(ref, identifier)
         if identifier not in self.extensions:
             return replace(result, reason="unknown-extension")
@@ -121,6 +140,7 @@ class ArtifactOperations:
         )
 
     def resolve(self, agent, identifier):
+        """Return effective artifacts only; discovery alone does not imply eligibility."""
         if identifier not in self.extensions:
             raise ValueError("unknown artifact extension")
         adapter = self.service._resolver(agent).plugin_adapter()
@@ -130,18 +150,21 @@ class ArtifactOperations:
         return tuple(status for status in statuses if status.effective)
 
     def set_policy(self, ref, identifier, policy):
+        """Append host policy without claiming a native enable/disable operation.
+
+        Only context-bound identifiers and policy are durable; locator code and
+        resolved plugin paths remain outside the journal.
+        """
         if identifier not in self.extensions or policy not in {
             "inherit",
             "enabled",
             "disabled",
         }:
-            return self.service._failed(
-                "artifact-policy", "unknown extension or invalid policy"
-            )
+            return failed("artifact-policy", "unknown extension or invalid policy")
         try:
             key = self._key(ref, identifier)
         except ValueError:
-            return self.service._failed(
+            return failed(
                 "artifact-policy",
                 "artifact policy requires the selected installation context",
             )

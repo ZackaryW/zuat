@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from test_plugin_workflows import setup
+from tests.pub.plugins.test_lifecycle import setup
 from zuat.pub import AssetSelector, Zuat, ZuatRequest
 from zuat.specs.native import PluginRef, PluginLifecycleResult
 

@@ -1,6 +1,6 @@
 import json
 
-from test_plugin_adapters import Runner, adapter
+from tests.specs.plugins.test_adapters import Runner, adapter
 from zuat.specs.codex_plugins import CodexPluginAdapter
 from zuat.specs.claude_plugins import ClaudePluginAdapter
 from zuat.specs.kimi_plugins import KimiPluginAdapter

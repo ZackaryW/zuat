@@ -6,7 +6,13 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from zuat.gitcore.models import AssetEvidence, Authority, JournalEvent, Profile
+from zuat.gitcore.models import (
+    AssetEvidence,
+    AssetRef,
+    Authority,
+    JournalEvent,
+    Profile,
+)
 from zuat.specs.interface import Materialization
 from zuat.specs.native import PluginRecord
 
@@ -18,6 +24,32 @@ class OperationStatus(StrEnum):
     SUCCESS = "success"
     PARTIAL = "partial"
     FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class AssetInspection:
+    """Source-relative native facts, not permission to adopt or replace a target.
+
+    Keep source equality separate from owned-baseline evidence: identical foreign
+    bytes are still unowned, and local edits remain conflicting even when they
+    match the supplied source. Missing fingerprints mean unresolved evidence,
+    not an invented empty asset. Update must inspect again before mutation.
+    """
+
+    classification: str
+    agent: str
+    kind: str
+    name: str | None
+    scope: str
+    asset_ref: AssetRef | None = None
+    source_fingerprint: str | None = None
+    observed_fingerprint: str | None = None
+    baseline_fingerprint: str | None = None
+    owned: bool = False
+    ownership_evidence: tuple[str, ...] = ()
+    source_matches: bool | None = None
+    completeness: str = "complete"
+    diagnostics: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,15 +83,35 @@ class AssetSelector:
             and (self.scope is None or item.ref.scope == self.scope)
             and (self.authority is None or item.authority is self.authority)
             and (self.present is None or item.present is self.present)
-            and (self.provider is None or self.provider == item.evidence.get("provider", "plugin" if item.ref.kind == "plugin" else "global"))
-            and (self.plugin_id is None or item.evidence.get("ref", {}).get("native_ref") == self.plugin_id)
-            and (self.version is None or (item.evidence.get("revision") or {}).get("version") == self.version)
+            and (
+                self.provider is None
+                or self.provider
+                == item.evidence.get(
+                    "provider", "plugin" if item.ref.kind == "plugin" else "global"
+                )
+            )
+            and (
+                self.plugin_id is None
+                or item.evidence.get("ref", {}).get("native_ref") == self.plugin_id
+            )
+            and (
+                self.version is None
+                or (item.evidence.get("revision") or {}).get("version") == self.version
+            )
             and (self.name is None or item.evidence.get("asset_name") == self.name)
         )
 
 
 @dataclass(frozen=True, slots=True)
 class AssetInput:
+    """A caller's intended source and installation identity.
+
+    The selected agent resolver validates names, scope, and locators. Source-aware
+    inspection/update require a supplied reference to agree with that identity;
+    it cannot override project context.
+    This value carries a runtime source path, not a durable plugin-source record.
+    """
+
     agent: str
     kind: str
     scope: str = "user"
@@ -82,6 +134,8 @@ class AssetInput:
 
 @dataclass(frozen=True, slots=True)
 class ZuatRequest:
+    """Explicit operation selection; force never bypasses native safety checks."""
+
     agents: tuple[str, ...] = SUPPORTED_AGENTS
     assets: tuple[AssetInput, ...] = ()
     asset_refs: tuple[str, ...] = ()
@@ -102,6 +156,13 @@ class ZuatRequest:
 
 @dataclass(frozen=True, slots=True)
 class OperationResult:
+    """Public outcome with domain evidence and an optional opaque operation ID.
+
+    Partial means convergence was not established. An absent operation ID can
+    mean a no-op or rejection before journaling, so callers must inspect status
+    rather than infer success from the presence of a history entry.
+    """
+
     operation: str
     status: OperationStatus
     operation_id: str | None = None

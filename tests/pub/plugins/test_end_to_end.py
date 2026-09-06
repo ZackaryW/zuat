@@ -1,7 +1,7 @@
 import json
 import pytest
 
-from test_pi_exact_plugins import PiManager
+from tests.specs.plugins.test_pi_revisions import PiManager
 from zuat.pub import Zuat, ZuatRequest, AssetSelector, ArtifactExtension, PluginRef
 from zuat.specs.pi import PiResolver
 from zuat.specs.pi_plugins import PiPluginAdapter

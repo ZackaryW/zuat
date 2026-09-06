@@ -3,7 +3,7 @@ import shutil
 from dataclasses import replace
 import pytest
 
-from test_plugin_workflows import setup
+from tests.pub.plugins.test_lifecycle import setup
 from zuat.pub import ZuatRequest
 from zuat.gitcore import OperationKind, OperationOutcome
 
