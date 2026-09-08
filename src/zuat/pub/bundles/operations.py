@@ -88,7 +88,11 @@ def bootstrap(
         return BundleOperationResult(bundle_id, "bootstrap", results)
 
 
-def remove(service, bundle_id, *, agents=None):
+def remove(service, bundle_id, *, agents=None, purge=False):
+    if purge and agents is not None:
+        raise BundleError(
+            "purge requires removal of all registered targets; omit agents"
+        )
     store = service._bundles
     with store.locked():
         record = store.get(bundle_id)
@@ -103,8 +107,14 @@ def remove(service, bundle_id, *, agents=None):
             for agent in selected
             if any(t.agent == agent for t in record.targets)
         )
+        outputs_removed = False
         if all(t["status"] == "absent" for t in state["bundles"][bundle_id]["targets"]):
+            if purge:
+                from zuat.pub.bundles.cleanup import purge as purge_outputs
+
+                purge_outputs(service, record)
+                outputs_removed = True
             del state["bundles"][bundle_id]
             store.write(state)
         _journal(service, bundle_id, results, "remove")
-        return BundleOperationResult(bundle_id, "remove", results)
+        return BundleOperationResult(bundle_id, "remove", results, outputs_removed)

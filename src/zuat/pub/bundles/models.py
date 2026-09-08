@@ -23,15 +23,24 @@ class BundleOutputError(BundleError):
     """A selected immutable build is missing or no longer matches its digest."""
 
 
+class BundleCleanupError(BundleError):
+    """Removal reached cleanup, but retained its registration for explicit retry."""
+
+
 @dataclass(frozen=True, slots=True)
 class BundleBuild:
-    """A successful compilation, not evidence of native installation."""
+    """A successful compilation, not evidence of native installation.
+
+    Source revision and commit describe the original Git build, not the last
+    equivalent build request. Both are absent for local working-tree inputs.
+    """
 
     bundle_id: str
     build_revision: str
     version: str
     agents: tuple[str, ...]
     source_commit: str | None = None
+    source_revision: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,9 +74,33 @@ class BundleOperationResult:
     bundle_id: str
     operation: str
     targets: tuple[BundleTarget, ...]
+    outputs_removed: bool = False
 
     @property
     def ok(self) -> bool:
         return (bool(self.targets) or self.operation == "remove") and all(
             t.status in {"success", "current", "absent"} for t in self.targets
         )
+
+
+@dataclass(frozen=True, slots=True)
+class BundleCheck:
+    """One current health check, never a persisted installation assertion."""
+
+    kind: str
+    agent: str
+    status: str
+    build_revision: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BundleDiagnostics:
+    """Build integrity and manager availability, not installation convergence."""
+
+    bundle_id: str
+    checks: tuple[BundleCheck, ...]
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.checks) and all(check.status == "ok" for check in self.checks)

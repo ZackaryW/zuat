@@ -26,6 +26,7 @@ from zuat.pub.models import (
 )
 from zuat.pub.extensions import ZuatExtension, register_extension
 from zuat.pub.bundles.models import (
+    BundleCheck, BundleDiagnostics, BundleCleanupError,
     BundleBuild, BundleBuildError, BundleError, BundleNotFoundError,
     BundleOperationResult, BundleOutputError, BundleRecord, BundleStoreError, BundleTarget,
 )
@@ -366,6 +367,14 @@ def get_bundle(bundle_id, **context):
     return _plugin_call("get_bundle", bundle_id, **context)
 
 
+def add_bundle(source, *, name=None, revision="HEAD", agents=None, trust=False, force=False, **context):
+    """Build and bootstrap one exact revision with ordinary trust/force rules."""
+    return _plugin_call(
+        "add_bundle", source, name=name, revision=revision, agents=agents,
+        trust=trust, force=force, **context,
+    )
+
+
 def build_bundle(source, *, name=None, revision="HEAD", **context):
     """Compile a source into immutable outputs in the selected compiler store."""
     return _plugin_call("build_bundle", source, name=name, revision=revision, **context)
@@ -381,14 +390,19 @@ def list_bundles(**context):
     return _plugin_call("list_bundles", **context)
 
 
+def doctor_bundle(bundle_id, *, agents=None, **context):
+    """Inspect selected build integrity and manager availability without repair."""
+    return _plugin_call("doctor_bundle", bundle_id, agents=agents, **context)
+
+
 def bootstrap_bundle(bundle_id, *, build_revision=None, agents=None, trust=False, force=False, **context):
     """Attempt independent native targets with explicit source trust and force."""
     return _plugin_call("bootstrap_bundle", bundle_id, build_revision=build_revision, agents=agents, trust=trust, force=force, **context)
 
 
-def remove_bundle(bundle_id, *, agents=None, **context):
-    """Remove only registered targets; unresolved native state retains registration."""
-    return _plugin_call("remove_bundle", bundle_id, agents=agents, **context)
+def remove_bundle(bundle_id, *, agents=None, purge=False, **context):
+    """Remove registered targets; explicit purge requires complete removal."""
+    return _plugin_call("remove_bundle", bundle_id, agents=agents, purge=purge, **context)
 
 
 def install_plugin(ref, *, trust=False, force=False, **context):
@@ -429,6 +443,9 @@ def clear_artifact_policy(ref, identifier, **context):
 
 
 __all__ = [
+    "BundleCleanupError",
+    "doctor_bundle", "BundleCheck", "BundleDiagnostics",
+    "add_bundle",
     "bootstrap_bundle", "remove_bundle",
     "build_bundle", "resolve_bundle",
     "BundleBuild", "BundleBuildError", "BundleError", "BundleNotFoundError",

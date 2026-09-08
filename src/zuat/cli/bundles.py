@@ -41,6 +41,15 @@ def attach_bundles(cli):
                     f"{target.agent}: {target.status}"
                     + (f" ({target.reason})" if target.reason else "")
                 )
+            if result.outputs_removed:
+                click.echo("generated outputs removed")
+        elif isinstance(result, pub.BundleDiagnostics):
+            click.echo(f"doctor: {result.bundle_id}")
+            for check in result.checks:
+                click.echo(
+                    f"{check.agent} {check.kind}: {check.status}"
+                    + (f" ({check.reason})" if check.reason else "")
+                )
         elif isinstance(result, pub.BundleBuild):
             click.echo(f"built: {result.bundle_id} {result.build_revision}")
         else:
@@ -48,8 +57,53 @@ def attach_bundles(cli):
                 click.echo(f"bundle: {record.bundle_id}")
                 for target in record.targets:
                     click.echo(f"  {target.agent}: last recorded {target.status}")
-        if isinstance(result, pub.BundleOperationResult) and not result.ok:
+        if (
+            isinstance(result, (pub.BundleOperationResult, pub.BundleDiagnostics))
+            and not result.ok
+        ):
             raise click.exceptions.Exit(1)
+
+    @bundle.command("add")
+    @click.argument("source")
+    @click.option("--name")
+    @click.option("--revision", default="HEAD")
+    @click.option(
+        "--agent", "agents", multiple=True, type=click.Choice(pub.SUPPORTED_AGENTS)
+    )
+    @click.option("--trust", is_flag=True)
+    @click.option("--force", is_flag=True)
+    @click.option("--json", "json_output", is_flag=True)
+    @click.pass_context
+    def add(ctx, source, name, revision, agents, trust, force, json_output):
+        """Build and bootstrap that exact revision in one explicit call."""
+        invoke(
+            ctx,
+            "add_bundle",
+            source,
+            name=name,
+            revision=revision,
+            agents=agents or None,
+            trust=trust,
+            force=force,
+            json_output=json_output,
+        )
+
+    @bundle.command("doctor")
+    @click.argument("bundle_id")
+    @click.option(
+        "--agent", "agents", multiple=True, type=click.Choice(pub.SUPPORTED_AGENTS)
+    )
+    @click.option("--json", "json_output", is_flag=True)
+    @click.pass_context
+    def doctor(ctx, bundle_id, agents, json_output):
+        """Check retained outputs and manager availability without repair."""
+        invoke(
+            ctx,
+            "doctor_bundle",
+            bundle_id,
+            agents=agents or None,
+            json_output=json_output,
+        )
 
     @bundle.command("build")
     @click.argument("source")
@@ -109,13 +163,19 @@ def attach_bundles(cli):
     @click.option(
         "--agent", "agents", multiple=True, type=click.Choice(pub.SUPPORTED_AGENTS)
     )
+    @click.option(
+        "--purge",
+        is_flag=True,
+        help="Delete generated output after complete removal; cannot use --agent.",
+    )
     @click.option("--json", "json_output", is_flag=True)
     @click.pass_context
-    def remove(ctx, bundle_id, agents, json_output):
+    def remove(ctx, bundle_id, agents, purge, json_output):
         invoke(
             ctx,
             "remove_bundle",
             bundle_id,
             agents=agents or None,
+            purge=purge,
             json_output=json_output,
         )

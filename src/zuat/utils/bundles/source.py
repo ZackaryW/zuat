@@ -14,6 +14,17 @@ from zuat.utils.bundles import capture
 from zuat.utils.bundles.paths import reject_links
 
 
+def validate_revision(revision):
+    """Use the same bounded Git selector rules for requests and saved provenance."""
+    if (
+        not isinstance(revision, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./-]{0,255}", revision)
+        or ".." in revision
+    ):
+        raise ValueError("unsafe Git revision")
+    return revision
+
+
 @contextmanager
 def acquire(source, revision="HEAD"):
     """Git blobs are materialized directly, avoiding executable checkout hooks.
@@ -43,12 +54,7 @@ def acquire(source, revision="HEAD"):
         not reference.startswith("git+file:") or parsed.netloc
     ):
         raise ValueError("only explicit local Git file sources are supported")
-    if (
-        not isinstance(revision, str)
-        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./-]{0,255}", revision)
-        or ".." in revision
-    ):
-        raise ValueError("unsafe Git revision")
+    validate_revision(revision)
     with TemporaryDirectory(prefix="zuat-source-") as directory:
         workspace = Path(directory)
         checkout = workspace / "source"

@@ -15,6 +15,7 @@ from zuat.pub.bundles.models import (
     BundleTarget,
 )
 from zuat.utils.bundles.paths import reject_links
+from zuat.utils.bundles.source import validate_revision
 from zuat.utils.mutation import atomic_write
 from zuat.utils.plugin_state import metadata_identifier
 
@@ -69,7 +70,14 @@ def _record(data):
         commit = item.get("source_commit")
         if commit is not None and not re.fullmatch(r"[a-f0-9]{40,64}", commit):
             raise ValueError("invalid commit")
-        builds.append(BundleBuild(identifier, revision, version, agents, commit))
+        source_revision = item.get("source_revision")
+        if data["source_kind"] == "git":
+            validate_revision(source_revision)
+        elif source_revision is not None:
+            raise ValueError("local source cannot claim a Git revision")
+        builds.append(
+            BundleBuild(identifier, revision, version, agents, commit, source_revision)
+        )
     if len({b.build_revision for b in builds}) != len(builds):
         raise ValueError("duplicate build")
     targets = []

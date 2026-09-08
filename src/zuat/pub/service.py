@@ -94,6 +94,19 @@ class Zuat:
         """Read historical registration without inspecting or mutating native state."""
         return self._bundles.get(bundle_id)
 
+    def add_bundle(self, source, *, name=None, revision="HEAD", agents=None, trust=False, force=False):
+        """Build then bootstrap that exact revision, retaining partial outcomes.
+
+        Pin the returned build rather than resolving latest again: another caller
+        can publish between the two operations. This is composition, not a new
+        transaction, and a failed bootstrap must not discard a successful build.
+        """
+        built = self.build_bundle(source, name=name, revision=revision)
+        return self.bootstrap_bundle(
+            built.bundle_id, build_revision=built.build_revision,
+            agents=agents, trust=trust, force=force,
+        )
+
     def build_bundle(self, source, *, name=None, revision="HEAD"):
         """Compile immutable native outputs without installing or journaling bodies."""
         from zuat.pub.bundles.building import build
@@ -108,15 +121,20 @@ class Zuat:
         """List immutable public records; unfinished attempts are never resumed."""
         return self._bundles.list()
 
+    def doctor_bundle(self, bundle_id, *, agents=None):
+        """Check retained builds and native availability without repair or history."""
+        from zuat.pub.bundles.diagnostics import doctor
+        return doctor(self, bundle_id, agents=agents)
+
     def bootstrap_bundle(self, bundle_id, *, build_revision=None, agents=None, trust=False, force=False):
         """Attempt a selected build once per agent; force permits bounded replacement."""
         from zuat.pub.bundles.operations import bootstrap
         return bootstrap(self, bundle_id, build_revision=build_revision, agents=agents, trust=trust, force=force)
 
-    def remove_bundle(self, bundle_id, *, agents=None):
-        """Remove registered targets explicitly, retaining unresolved registrations."""
+    def remove_bundle(self, bundle_id, *, agents=None, purge=False):
+        """Remove targets; opt-in purge clears generated files only after absence."""
         from zuat.pub.bundles.operations import remove
-        return remove(self, bundle_id, agents=agents)
+        return remove(self, bundle_id, agents=agents, purge=purge)
 
     def update_asset(
         self, asset: AssetInput, *, force: bool = False

@@ -140,7 +140,10 @@ list_bundles() -> tuple[BundleRecord, ...]
 resolve_bundle(bundle_id, *, build_revision=None, agent) -> Path
 bootstrap_bundle(bundle_id, *, build_revision=None, agents=None,
                  trust=False, force=False) -> BundleOperationResult
-remove_bundle(bundle_id, *, agents=None) -> BundleOperationResult
+add_bundle(source, *, name=None, revision="HEAD", agents=None,
+           trust=False, force=False) -> BundleOperationResult
+doctor_bundle(bundle_id, *, agents=None) -> BundleDiagnostics
+remove_bundle(bundle_id, *, agents=None, purge=False) -> BundleOperationResult
 ```
 
 `Zuat(..., bundle_root=None)` selects an independent compiler store, defaulting
@@ -161,7 +164,11 @@ Input capture is bounded to 10,000 files / 100 MiB and checks concurrent changes
 
 Builds retain validated skill/support bytes and agent-specific manifests. Content
 and renderer inputs determine an immutable build revision. Repeated equivalent
-builds reuse it. Missing/modified output raises `BundleOutputError`, never a silent
+builds reuse it, preserving the original build's provenance. For Git inputs,
+`BundleBuild.source_revision` retains the requested branch, tag, `HEAD`, or commit
+selector alongside the resolved `source_commit`; both are `None` for local inputs.
+This metadata survives reopening the compiler store and is not added to tracking
+history. Missing/modified output raises `BundleOutputError`, never a silent
 rebuild. `BundleBuildError`, `BundleStoreError`, and `BundleNotFoundError` are other
 typed `BundleError` failures. Generated bodies and local source bindings live
 only in the compiler store, not Git history, profiles, or recovery records.
@@ -183,7 +190,29 @@ one install attempt. Failure after deletion can leave the target absent. There i
 no automatic retry, reconciliation daemon, cross-agent transaction, compensating
 rollback, or guaranteed restoration from retained bundle builds. Removal retains
 the registration while any owned target is unresolved, and unregisters after
-verified absence. Retained build files are not garbage-collected by removal.
+verified absence. Default removal retains generated files.
+
+`add_bundle` is the short path: build once, then bootstrap that exact revision.
+It returns the ordinary bootstrap result, including its bundle ID and independent
+target outcomes. A failed bootstrap leaves the successful build registered.
+
+`doctor_bundle` checks retained output integrity and native manager availability
+for selected agents (default: all supported build agents). Its typed `checks`
+report `kind`, `agent`, `status`, optional build revision, and safe reason codes;
+`ok` is false if any check is unhealthy. It neither repairs output nor changes
+native configuration, recorded attempts, or journal history. It does not certify
+that the bundle is installed/current; `status` remains historical.
+
+Use `remove_bundle(id, purge=True)` to remove all registered targets and then
+delete that bundle's generated build/catalog trees. Purge rejects agent filters,
+links and reparse points; failed native removal preserves outputs. Filesystem
+cleanup failure raises `BundleCleanupError`, retaining the registration and
+absent-target evidence so the same explicit call can be retried. Successful
+cleanup reports `outputs_removed=True`. This deletes generated files, not source
+trees, other bundles, native caches or history; rebuilding requires the source.
+Native marketplace registrations remain and their compiler paths can be recreated
+by a later build/bootstrap. There is no orphan-output sweep or generation GC;
+choose purge before unregistering if you want generated files removed.
 
 Results report each target independently (`success`, `current`, `unsupported`,
 `unavailable`, `failed`, `indeterminate`, or verified `absent` on removal).
@@ -207,8 +236,7 @@ class ReviewTools(ZuatExtension):
         return (context.runtime_root / "skills/reviewer/SKILL.md",)
 
     def bootstrap(self, state: Zuat, source: Path):
-        build = state.build_bundle(source, name="review-tools")
-        return state.bootstrap_bundle(build.bundle_id, agents=("claude",), trust=True)
+        return state.add_bundle(source, name="review-tools", agents=("claude",), trust=True)
 
 # Registration itself does not build, install, invoke locators or persist code.
 with Zuat() as state:
@@ -228,15 +256,20 @@ activation, host policy and containment. No extension code is loaded from `.zuat
 
 ```console
 zuat bundle build ./my-skills --name review-tools --json
+zuat bundle add ./my-skills --name review-tools --agent claude --trust --json
 zuat bundle list --json
 zuat bundle status <bundle-id> --json
+zuat bundle doctor <bundle-id> --agent claude --json
 zuat bundle bootstrap <bundle-id> --agent claude --trust --force --json
 zuat bundle remove <bundle-id> --agent claude --json
+zuat bundle remove <bundle-id> --purge --json
 zuat --root ./tracking bundle --home ./test-home --bundle-root ./compiler list
 ```
 
 Use `build --revision` for a Git ref and `bootstrap --build-revision` for a retained
-compiled revision. Run `python examples/managed_bundle.py --agent claude` for a
+compiled revision. `add --revision` builds and bootstraps a Git ref in one call.
+Doctor and operation failures return nonzero exits in human and JSON formats.
+Run `python examples/managed_bundle.py --agent claude` for a
 complete public-API build/reopen/bootstrap/artifact/remove example. It uses only
 temporary native homes and requires the selected native executable, not Click or
 predecessor packages. Compiler attribution is included in the packaged

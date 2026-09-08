@@ -8,6 +8,7 @@ def test_bundle_reference_envelope_is_allowlisted():
             "bundle_id": "safe-bundle",
             "build_revision": "a" * 64,
             "source": "credential-sentinel",
+            "source_revision": "private-source-ref-sentinel",
             "files": ["source-body-sentinel"],
         }
     )

@@ -65,6 +65,8 @@ def build(service, source, *, name=None, revision="HEAD"):
                 if previous and any(
                     item["build_revision"] == digest for item in previous["builds"]
                 ):
+                    # Content-addressed reuse retains the first build's provenance;
+                    # a new ref resolving to identical inputs is not a new build.
                     for agent in adapters:
                         resolve(service, bundle_id, build_revision=digest, agent=agent)
                     return next(
@@ -103,6 +105,7 @@ def build(service, source, *, name=None, revision="HEAD"):
                         "version": version,
                         "agents": list(adapters),
                         "source_commit": commit,
+                        "source_revision": revision if kind == "git" else None,
                         "digests": hashes,
                         "sources": captured.sources,
                     }
