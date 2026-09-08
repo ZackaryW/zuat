@@ -25,8 +25,9 @@ context: |
     scopes, reconciliation, and verification. Shared helpers provide only
     agent-neutral mechanics and never select behavior by agent identity.
   - gitcore/ owns the private append-only journal and named-profile persistence
-    through a Zuat-controlled GitPython adapter. Git indexes, commits, hashes,
-    refs, branches, and recovery mechanics never cross the public boundary.
+    through a Zuat-controlled GitPython adapter. Private journal indexes,
+    commits, hashes, refs, branches, and recovery mechanics never cross the
+    public boundary; external source provenance is a separate domain contract.
 
   Dependency policy:
   - The base zuat package and public Python interface must import without Click.
