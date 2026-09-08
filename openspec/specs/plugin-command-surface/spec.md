@@ -8,7 +8,7 @@ Provide simple public plugin discovery, lifecycle, and artifact operations with 
 
 ### Requirement: Public plugin operations
 
-The supported Python interface SHALL provide installed plugin discovery, explicit available-catalog discovery, install, update, remove, artifact extension registration, artifact resolution, artifact status, and artifact policy set and clear operations. The optional CLI SHALL expose plugin discovery, lifecycle, artifact status, and artifact policy operations through the same public interface. Neither surface SHALL require callers to construct internal reconciliation plans or manipulate Git state. Artifact extension registration SHALL be available to Python hosts without requiring a CLI mechanism that loads arbitrary Python code.
+The supported Python interface SHALL provide installed plugin discovery, explicit available-catalog discovery, install, update, remove, general extension registration, artifact resolution, artifact status, and artifact policy set and clear operations. It SHALL expose the subclassable public `ZuatExtension` contract and `register_extension` entry points at module and service level in place of the artifact-only `ArtifactExtension` and `register_artifact` surface, without legacy aliases. The optional CLI SHALL expose plugin discovery, lifecycle, artifact status, and artifact policy operations through the same public interface. Neither surface SHALL require callers to construct internal reconciliation plans or manipulate Git state. Extension registration SHALL be available to Python hosts without requiring a CLI mechanism that loads arbitrary Python code. Generalizing registration SHALL preserve existing artifact result and policy operations.
 
 #### Scenario: Plugin lifecycle through the public interface
 
@@ -19,6 +19,11 @@ The supported Python interface SHALL provide installed plugin discovery, explici
 
 - **WHEN** equivalent plugin lifecycle requests are issued through Python and the installed CLI extra
 - **THEN** they use the same public orchestration and produce equivalent domain outcomes
+
+#### Scenario: General extension through the base Python package
+
+- **WHEN** a host subclasses the public extension contract and explicitly registers its instance without the CLI extra
+- **THEN** registration works through the new public surface without requiring an artifact-only wrapper or compatibility alias, and artifact queries retain their existing eligibility and policy semantics
 
 ### Requirement: Installed and available discovery are distinct
 

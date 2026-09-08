@@ -73,3 +73,56 @@ Scenario coverage is grouped below; observed execution evidence follows.
 - Focused new implementation Ruff checks pass. `openspec validate add-managed-bundle-bootstrap --strict` and `git diff --check` pass.
 - Final combined pytest run, including the Pi install-route regression and all containment/portable-path/index checks: **390 passed, 2 skipped**, 235.39s. The two opt-in native probes passed separately. Strict change validation and diff checks passed again after this run. All 19 implementation tasks are complete.
 - No real agent home was selected for mutation. Native integration writes were confined to temporary homes/stores. No agent-bundler/ZPP source, old foundation artifacts, or unrelated `.gitignore` edits were changed. No commit or archive was created.
+
+## Minimal integration follow-up
+
+The original implementation was checkpointed in `af2af02`. The approved follow-up
+adds small convenience surfaces, not the predecessor's reconciliation engine.
+
+- One-call add: **4 failing tests** on the absent API, then **4 passed**, 4.19s. The workflow pins its own build despite an intervening publication, preserves partial success, rejects untrusted bootstrap without native writes, and never bootstraps invalid source.
+- Read-only diagnostics: **4 failing tests**, then **4 passed**, 2.76s. Checks cover manager availability, unsupported Kimi, output integrity, safe failures, invalid registration, and preserving pending attempts/native files/journal history. Added missing-file coverage alongside modified-file coverage.
+- Explicit purge: **6 failing tests** on the absent option/result, then **6 passed**, 13.07s. Complete removal deletes only selected compiler build/catalog trees, preserves neighbors and source files, rejects partial filters and links, and retains registration on cleanup I/O failure. Additional coverage verifies that a manually restored native installation prevents a later purge retry.
+- CLI convenience: **6 failing tests** on absent commands, then all bundle CLI tests **8 passed**, 2.61s. Public forwarding preserves source/revision/agent/trust/force/root choices, typed JSON results and unhealthy exit codes in both output formats.
+- Initial focused bundle/CLI/utility regression: **73 passed**, 76.13s. Latest cleanup/diagnostics subset: **12 passed**, 19.90s, including the restored-native retry guard and missing-file check.
+- Wheel and source distribution built successfully. A fresh installed base-only wheel passed public add/get/resolve/doctor/purge with explicit temporary stores and unsupported Kimi; Click, Typer, agent-router and skill2plugin imports were absent. This is packaging/unsupported-boundary evidence, not a new live native-agent probe.
+- Installed CLI wheel: **6 passed**, 2.16s, executing the new CLI consumer workflow and result presentation/exit tests from isolated Python.
+- Qualifying Behave regression: **4 scenarios / 23 steps passed**, 7.509s. No duplicate Behave scenarios were added.
+- Scoped Ruff and strict OpenSpec validation passed. README documents purge's retained native marketplace registrations and no orphan sweep. Existing `config.yaml` boundaries need no product-detail additions.
+- Full final pytest regression: **412 passed, 2 skipped**, 261.18s. The skips are the existing opt-in native probes; this follow-up used isolated native-boundary fixtures rather than repeating live native tests. All **24 tasks** are complete.
+- No real agent home, predecessor repository, older foundation artifact, or user `.gitignore` edit was changed. Purge tests deleted only their own temporary generated outputs. This follow-up remains uncommitted and the change remains unarchived; checkpoint `af2af02` is unchanged.
+
+## Verification correction: requested Git revision (2026-09-08)
+
+- Review found the design promised retention of the requested Git ref, but only
+  the resolved commit was retained. Reopened task 2.1 in this same change.
+- Added `tests/pub/bundles/test_provenance.py` before implementation: **11 failed**,
+  24.88s, on missing `source_revision` and accepted invalid persisted selectors.
+- Added read-only `BundleBuild.source_revision`, private compiler persistence and
+  shared acquisition/index validation. Local builds report `None`; equivalent
+  builds preserve the original ref/commit rather than replace provenance or
+  change content-addressed identity. No journal metadata allowance was added.
+- Focused tests then passed: **11 passed**, 12.57s. Extended the journal allowlist
+  regression to reject source-revision metadata. README, design, task 2.1 and the
+  verification report document the correction; the stable config is unchanged.
+- Fresh installed base-only wheel ran the same **11 tests successfully**, 12.40s,
+  after confirming imports came from `site-packages` and Click was absent.
+- Full regression: **423 passed, 2 skipped**, 277.73s. The skips remain the opt-in
+  native probes; no live agent installation test was run for this correction.
+- Behave: **1 feature, 4 scenarios, 23 steps passed**, 7.769s. Package build,
+  strict change validation, scoped Ruff checks and diff checks passed.
+- All **24 tasks** are complete again. No existing missing Git ref was inferred
+  or backfilled, no real agent home was mutated, and unrelated work was preserved.
+  This correction does not itself archive the change or create a commit.
+
+## Finalization (2026-09-08)
+
+- Committed the convenience APIs, source-ref correction, tests and README in
+  `12aa595` with two validated zmem decisions covering retry-safe cleanup and
+  immutable build provenance.
+- Synced all four delta capabilities into canonical specs, preserving unrelated
+  requirements and existing purposes. All **six canonical specs** validate.
+- Archived this change as `2026-09-08-add-managed-bundle-bootstrap` after verifying
+  every delta was applied. All ten files, including hidden change metadata, were
+  preserved during the move. The earlier verification warning is resolved.
+- The user `.gitignore` edits and old foundation artifacts remain outside the
+  finalized work. No runtime implementation changed during archival.

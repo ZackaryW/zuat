@@ -122,3 +122,45 @@ Public bundle operations SHALL work without the optional CLI or predecessor pack
 
 - **WHEN** a host explicitly invokes extension code that builds and bootstraps a bundle through public APIs with a selected store and agent set
 - **THEN** it receives ordinary bundle handles and per-agent results under the same trust and force rules, without accessing private registry files or treating extension registration as installation permission
+
+### Requirement: Small bundle convenience operations
+
+The public interface SHALL expose one-call `add_bundle`, read-only `doctor_bundle`, and opt-in purge on complete bundle removal, with equivalent optional CLI operations. Add SHALL build once and bootstrap the exact returned revision under existing agent, trust and force semantics. Bootstrap failure SHALL preserve the successful build and independent outcomes without retry or rollback.
+
+#### Scenario: One-call bootstrap uses its own build
+
+- **WHEN** a caller adds a source and another build becomes latest before bootstrap
+- **THEN** add bootstraps its own returned revision rather than the later build
+
+#### Scenario: Add preserves a partial result
+
+- **WHEN** one selected agent installs successfully while another fails or is unsupported
+- **THEN** add retains the build and successful installation and reports distinct outcomes
+
+### Requirement: Read-only bundle diagnostics
+
+Diagnostics SHALL verify retained output integrity and selected native manager availability, returning typed checks with safe reason codes. Omitted agent selection SHALL use supported build agents. It SHALL NOT create native homes/catalogs, mutate compiler records, run recovery, append journal events, install or repair anything. Historical status SHALL remain separate; a healthy diagnostic SHALL NOT claim installed-state convergence. Corrupt stores and unknown handles SHALL fail with typed errors rather than reset. CLI diagnostics SHALL return nonzero for unhealthy results.
+
+#### Scenario: Missing output and unavailable manager
+
+- **WHEN** a retained output is missing or modified and a selected manager is unavailable
+- **THEN** diagnostics reports both problems without repairing files or changing stored target evidence
+
+#### Scenario: Unsupported diagnostic target
+
+- **WHEN** Kimi is explicitly selected for bundle diagnostics
+- **THEN** diagnostics reports unsupported without attempting grouped-skill installation
+
+### Requirement: Explicit bounded compiler cleanup
+
+Removal with purge SHALL reject partial agent filters and delete only the selected registered bundle's generated build and catalog subtrees after all registered targets are removed or verified absent. Other bundles, source trees, native caches and tracking history SHALL be preserved. Cleanup SHALL reject linked, escaping or unsafe targets before deletion. Failure SHALL retain registration and truthful target outcomes for an explicit retry. Default removal SHALL retain generated files. Cleanup SHALL NOT scan orphan output or automatically deregister native marketplaces.
+
+#### Scenario: Complete removal with cleanup
+
+- **WHEN** a caller removes a registered bundle with purge and all native targets are verified absent
+- **THEN** only that bundle's generated files and registration are removed, while unrelated files and journal history remain
+
+#### Scenario: Failed removal or unsafe cleanup
+
+- **WHEN** any target cannot be verified removed, or a cleanup subtree contains a link or reparse point
+- **THEN** cleanup does not delete generated files and the registration remains available for explicit retry

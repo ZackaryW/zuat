@@ -23,7 +23,10 @@ list_bundles() -> tuple[BundleRecord, ...]
 resolve_bundle(bundle_id, *, build_revision=None, agent) -> Path
 bootstrap_bundle(bundle_id, *, build_revision=None, agents=None,
                  trust=False, force=False) -> BundleOperationResult
-remove_bundle(bundle_id, *, agents=None) -> BundleOperationResult
+add_bundle(source, *, name=None, revision="HEAD", agents=None,
+           trust=False, force=False) -> BundleOperationResult
+doctor_bundle(bundle_id, *, agents=None) -> BundleDiagnostics
+remove_bundle(bundle_id, *, agents=None, purge=False) -> BundleOperationResult
 ```
 
 The service accepts a separate `bundle_root`; helpers forward it along with existing `root` and `home` context. An omitted build revision resolves the latest successfully registered build once at the start of a call, not separately during each agent attempt. Runtime path resolution validates containment and build integrity. No public mutable registry handle is returned. A build provides its bundle ID and build revision; per-target results distinguish success, current, unsupported, unavailable, failed and indeterminate with safe diagnostics. Last-attempt metadata is labeled historical, never fresh native status. Bundle errors use typed public failures/exceptions consistently with existing conventions.
@@ -73,6 +76,8 @@ Port bounded skill discovery, collision checks, frontmatter validation, source-t
 
 Keep source selection explicit: local sources bind to their resolved roots; Git sources retain a sanitized locator, requested revision and resolved commit. Reject credential-bearing source references for persistent bindings rather than saving secrets. Fetch into a temporary checkout without source hook execution or recursive submodules. No source-provided build scripts execute.
 
+Expose the original build's requested Git selector as read-only `BundleBuild.source_revision`, alongside `source_commit`; local inputs report neither. Validate the selector on acquisition and compiler-index reads. Equivalent content/rendering inputs reuse the original build and its original provenance, even if selected through another ref or a later commit with identical skill content. This is build provenance, not a log of every acquisition request; do not add it to journal metadata or native plugin identity.
+
 Use existing GitPython, YAML and neutral filesystem/process helpers where suitable. No runtime dependency on agent-bundler, agent-router, Typer or platformdirs is required. Preserve applicable attribution when porting source. Alternative rejected: importing the predecessor compiler and thereby retaining its state/dependency surface.
 
 ### 4. Native formation and bootstrap belong to each agent
@@ -91,13 +96,15 @@ Without force, no failed/unsupported update triggers removal. With force, re-est
 
 Record each target's observed outcome and complete the call. If replacement installation fails after deletion, leave the bundle registered and report absence/uncertainty. Preserve successful other-agent work. An update or removal can have side effects even when its command fails: retain truthful outcome evidence rather than promise original content survived. No automatic rollback, retry queue, profile publication or bundle-level inverse plan is added. Existing lower-level history remains forward-appended and reference-only.
 
-Remove selected registered targets similarly. Keep registration while any target is installed or unresolved; unregister after all are verified absent. Uninstalled build-only bundles can be unregistered without native calls. Retained immutable output need not be garbage-collected in this change and is not advertised as a restore guarantee.
+Remove selected registered targets similarly. Keep registration while any target is installed or unresolved; unregister after all are verified absent. Uninstalled build-only bundles can be unregistered without native calls. Default removal retains output and is not advertised as a restore guarantee. Explicit `purge=True` rejects agent filters, removes all registered targets, and deletes only that bundle's compiler-owned build/catalog subtrees after complete verified removal. Validate exact containment and reject links/reparse points before deletion. A cleanup failure retains registration with truthful absent-target evidence for explicit retry; no compensating reinstall occurs. Native marketplace registrations are not automatically deregistered; a later explicit build/bootstrap can recreate their compiler catalog paths. This is targeted removal cleanup, not orphan/generation garbage collection.
 
 Alternative rejected: port predecessor reconciliation/state wholesale or add transaction compensation. The requested operation is explicit bootstrap/replace, not convergence.
 
 ### 6. Thin CLI and behavioral evidence
 
 Add `zuat bundle build`, `list`, `status`, `bootstrap` and `remove`; `status` reports stored registration/last-attempt evidence and does not mutate. Expose revision selection, root selection, agent filters, trust and force where relevant. Human and JSON output use the same public results. Keep Click optional and do not add old executable aliases.
+
+Add `bundle add`, `doctor` and `remove --purge` as thin public calls. `add_bundle` composes build followed by bootstrap of the exact returned revision; a later concurrent build cannot change that selection. Keep the successful build registered on bootstrap failure, with existing per-agent results and no retry. `doctor_bundle` returns typed output-integrity and manager-availability checks: verify each retained agent output and run read-only native discovery for selected agents (default supported build agents). Report unsupported/unavailable/incomplete inventory with safe reason codes. It does not claim installation convergence, create native homes/catalogs, update last-attempt records, recover operations, or append journal entries. Invalid stores and unknown handles retain typed errors. Diagnostics and operation failures give nonzero CLI exits in both formats. `config.yaml` needs no new product detail; its existing boundaries cover these helpers.
 
 Use nested tests in `tests/pub/bundles`, `tests/pub/extensions`, `tests/specs/bundles`, `tests/utils/bundles` and the existing CLI grouping. Write failing behavior tests before each implementation increment; verify extension registration/isolation, actual generated files, native fixtures, independent target outcomes and journal contents. Use pytest for the complete consumer workflow because one focused test can establish it; retain existing qualifying Behave regressions without duplicating them for presentation.
 

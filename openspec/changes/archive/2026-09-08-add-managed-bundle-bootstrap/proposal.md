@@ -6,6 +6,7 @@ Zuat can manage installed agent assets but cannot yet form a plugin from a skill
 
 - Add local/Git skill-source compilation into registered, immutable, agent-compatible bundle builds.
 - Add build, get/list, bootstrap and remove operations under `zuat.pub`, with optional Click commands using those same APIs.
+- Add one-call build/bootstrap, read-only build/manager diagnostics, and opt-in generated-output cleanup after complete removal, without reconciliation or automatic garbage collection.
 - **BREAKING** Replace the artifact-only `ArtifactExtension` class and `register_artifact` entry points with a subclassable public `ZuatExtension` contract and `register_extension` entry points, without legacy aliases. Artifact location becomes an optional capability while existing artifact resolution, containment, eligibility and policy behavior are preserved.
 - Keep extension identifier and contract version separate from native plugin identity and version. Extensions compose public bundle and lifecycle APIs rather than edit `.zuat`; registration alone does not install plugins, execute lifecycle callbacks, grant trust or persist extension code. No automatic extension loader or reconciliation callbacks are introduced.
 - Keep a private bundle registry and generated outputs in `.zuat`; expose typed handles and runtime resolution rather than a public filesystem schema. Do not relocate the existing Git registry.
