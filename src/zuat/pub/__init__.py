@@ -25,6 +25,7 @@ from zuat.pub.models import (
     ZuatRequest,
 )
 from zuat.pub.extensions import ZuatExtension, register_extension
+from zuat.pub.skills import SkillCandidate, SkillLocation, locate_skill
 from zuat.pub.bundles.models import (
     BundleCheck, BundleDiagnostics, BundleCleanupError,
     BundleBuild, BundleBuildError, BundleError, BundleNotFoundError,
@@ -480,6 +481,9 @@ __all__ = [
     "OperationStatus",
     "Profile",
     "SUPPORTED_AGENTS",
+    "SkillCandidate",
+    "SkillLocation",
+    "locate_skill",
     "Zuat",
     "ZuatRequest",
     "adopt_all",

@@ -10,6 +10,7 @@ from zuat.specs.native import Agent, HookSource, Scope
 from zuat.specs.pi_plugins import PiPluginAdapter
 from zuat.specs.interface import PluginAdapter
 from zuat.utils.assets import load_pi_extension
+from zuat.utils.skill_lookup import SkillSearch, directory_chain, tiers_under
 
 
 class PiResolver:
@@ -26,6 +27,24 @@ class PiResolver:
             plugin_factory=lambda native_home, store: PiPluginAdapter(home=native_home, store=store, project_root=Path(project_root) if project_root else None, trust_project=trust_project), plugin_adapter=plugins,
         )
         self.home = self._support.home
+
+    def skill_search(self, cwd: Path) -> SkillSearch:
+        """Pi keeps the first discovered same-named skill and warns on collisions.
+
+        Source: Pi skills documentation. Its discovery order and symlink
+        handling are not verified against Pi's source, so same-named copies stay
+        unresolved and symlinked skills are unsupported. Package, settings, and
+        ``--skill`` sources are not modeled.
+        """
+        levels = directory_chain(cwd)
+        return SkillSearch(
+            tiers=(
+                *tiers_under((self.home,), ".pi/agent/skills", scope="user", follow_symlinks=False),
+                *tiers_under((self.home,), ".agents/skills", scope="user", follow_symlinks=False),
+                *tiers_under(levels, ".pi/skills", scope="project", follow_symlinks=False),
+                *tiers_under(levels, ".agents/skills", scope="project", follow_symlinks=False),
+            ),
+        )
 
     def observe(self, registry_root: Path) -> Observation:
         return self._support.observe(registry_root)

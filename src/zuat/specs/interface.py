@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from zuat.specs.native import PluginLifecycleResult, PluginRecord, PluginRef
     from zuat.utils.inspection import TargetInspection
+    from zuat.utils.skill_lookup import SkillSearch
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +181,10 @@ class AgentResolver(Protocol):
     agent: str
 
     def bundle_adapter(self) -> BundleAdapter | None: ...
+
+    def skill_search(self, cwd: Path) -> SkillSearch:
+        """Describe, without any writes, where this agent searches for skills from ``cwd``."""
+        ...
 
     def inspect_asset(self, source: Path, kind: AssetKind, scope: str, *, name: str | None = None, locator: str | None = None) -> TargetInspection: ...
 

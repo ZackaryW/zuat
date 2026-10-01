@@ -128,6 +128,60 @@ still required where the selected agent's provider inspection depends on it.
 This does not replace ZPP's dependency, translate its source objects, migrate
 predecessor ownership, remove old hooks, or manage consumer `.gitignore` policy.
 
+## Read-only installed-skill lookup
+
+```python
+from zuat.pub import SkillLocation, locate_skill
+
+locate_skill(agent, name, *, cwd, home=None, selected=None) -> SkillLocation
+```
+
+Answers "which installed copy of skill `name` does `agent` use when invoked from
+`cwd`?" without a registry. It never creates or updates Zuat state, installs,
+adopts, copies or executes anything, runs a native command, or fetches sources. It
+does not import `Zuat`. `agent` is required (`codex`, `claude`, `kimi`, `pi`); no
+agent is inferred or searched implicitly. `home` selects the native home for
+isolated tests. `name` is the name declared in `SKILL.md`, which may differ from
+its folder. Only that file's metadata is read, never the skill's other resources.
+
+`SkillLocation` is frozen. `outcome` is exactly one of:
+
+| Outcome | Meaning |
+| --- | --- |
+| `located` | `root` (canonical installed directory), `entrypoint`, `scope`, `provider` (`global`) and `provenance` are set. |
+| `missing` | No searched location holds a skill with that declared name. |
+| `unresolved` | Several copies or an unmodeled location make the host's choice unknowable; `candidates` lists every copy. |
+| `unsupported` | Unknown agent, plugin-qualified name (`plugin:skill`), or a symlinked skill for an agent without verified symlink support. |
+| `invalid` | A folder named for the skill has no readable `SKILL.md` or valid metadata, or `selected` is not a candidate. |
+
+`provenance` is `single-candidate`, `native-rule`, `native-config`, or
+`caller-evidence`. Expected outcomes are returned, never raised. Unrelated broken
+skills never affect a lookup.
+
+Selection follows only verified native behavior (host documentation checked
+2026-10-01); Zuat's recorded install scope or profile never influences it:
+
+| Agent | Searched from `cwd` | Same name in several places |
+| --- | --- | --- |
+| Claude | `~/.claude/skills`; `.claude/skills` in `cwd` and parents up to the repository root; symlinks followed | user beats project; the same name at two project levels is unresolved |
+| Codex | `~/.codex/skills`, `~/.agents/skills`; `.agents/skills` in `cwd` and parents to the repository root; symlinks followed | never chosen by Zuat; unresolved unless `[[skills.config]] enabled = false` in `~/.codex/config.toml` leaves one (`native-config`) |
+| Kimi | `~/.kimi-code/skills`, `~/.agents/skills`; `.kimi-code/skills`, `.agents/skills` at the project root (nearest `.git` ancestor) | project beats user; two copies in one scope are unresolved; symlinks unsupported |
+| Pi | `~/.pi/agent/skills`, `~/.agents/skills`; `.pi/skills`, `.agents/skills` in `cwd` and parents | unresolved (documented "first found wins" order is not yet verified against Pi's source); symlinks unsupported |
+
+When the host already reported which copy it loaded, pass that path (the skill
+directory or its `SKILL.md`) as `selected`. It is accepted only if it is a real
+candidate for that agent and directory, and is never replaced by another copy.
+
+Limitations: plugin-provided skills, Claude skills in subdirectories that load
+lazily during a session, bundled/built-in skills, and `KIMI_CODE_HOME` are not
+modeled. Locations Zuat does not model but could shadow a copy are checked, and a
+match there makes the result `unresolved` naming that location: Claude's managed
+settings directory, Codex's `/etc/codex/skills`, and Kimi's `extra_skill_dirs`.
+Pi's package, settings and `--skill` sources are not yet checked.
+
+Run `python examples/installed_skill_lookup.py` for a complete example that uses
+only a temporary home and project.
+
 ## Managed bundles and extensions
 
 The base Python package provides these methods on `Zuat` and equivalent helpers

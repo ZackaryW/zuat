@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from zuat.specs.base import ResolverSupport
@@ -12,11 +13,23 @@ from zuat.specs.claude_plugins import ClaudePluginAdapter
 from zuat.specs.interface import PluginAdapter
 from zuat.utils.documents import add_fragment, contains_fragment, read_json, remove_fragment, write_json
 from zuat.utils.assets import load_json_hook
+from zuat.utils.skill_lookup import SkillSearch, directory_chain, tiers_under
+
+
+def _managed_root() -> Path:
+    """Managed-settings directory per the Claude Code managed-settings documentation."""
+    if sys.platform == "win32":
+        return Path(r"C:\Program Files\ClaudeCode")
+    if sys.platform == "darwin":
+        return Path("/Library/Application Support/ClaudeCode")
+    return Path("/etc/claude-code")
 
 
 class ClaudeResolver:
     agent = "claude"
     native_agent = Agent.CLAUDE
+    # Class attribute so tests can redirect the machine-wide location.
+    MANAGED_ROOT = _managed_root()
 
     def __init__(self, *, home: str | Path | None = None, project_root: str | Path | None = None, state_root: str | Path | None = None, plugins: PluginAdapter | None = None, trust_project: bool = False) -> None:
         self._support = ResolverSupport(
@@ -31,6 +44,26 @@ class ClaudeResolver:
             contains=contains_fragment, add=add_fragment, remove=remove_fragment, plugin_adapter=plugins,
         )
         self.home = self._support.home
+
+    def skill_search(self, cwd: Path) -> SkillSearch:
+        """Enterprise > personal > project; project skills load from cwd up to the repository root.
+
+        Source: Claude Code skills documentation (name resolution, nested discovery).
+        Skills below the invocation directory load lazily during a session and
+        plugin skills are namespaced; neither is modeled here.
+        """
+        project_levels = directory_chain(cwd)
+        return SkillSearch(
+            tiers=(
+                *tiers_under((self.home,), ".claude/skills", scope="user", follow_symlinks=True),
+                *tiers_under(project_levels, ".claude/skills", scope="project", follow_symlinks=True),
+            ),
+            unmodeled=tiers_under(
+                (self.MANAGED_ROOT,), ".claude/skills", scope="managed",
+                follow_symlinks=True, label="managed",
+            ),
+            prefer=("user", "project"),
+        )
 
     def observe(self, registry_root: Path) -> Observation:
         return self._support.observe(registry_root)
