@@ -1,0 +1,36 @@
+# Tasks
+
+## 1. Complete group selection and inspection
+
+- [x] 1.1 Factor the pure exact-group selection mechanics alongside existing fragment helpers, documenting supported shapes, one-to-one membership, native order, and absent/partial/ambiguous outcomes. Observe failing pytest cases before implementation, then pass cases for mapping/list groups, unrelated neighbors, duplicate candidates, missing members, reordered members, malformed shapes, repeatability, and unchanged inputs before integrating callers.
+- [x] 1.2 Integrate complete selection into resolver inspection with validated baseline-first and safe source-fallback evidence, preserving independent receipt/source fields on unresolved selection. Use red/green public inspection tests for stale valid receipts with current source, old/new group coexistence, competing ownership, partial groups, duplicates, unrelated insertion, reordered conflicts, and invalid receipts; verify inspection leaves native, ownership, and profile state unchanged and document classification/evidence semantics in the README.
+
+## 2. Consistent install and adoption preflight
+
+- [x] 2.1 Apply shared target/provider identity checks to source-driven hook install under the registry lock, including fresh pre-mutation validation, and reject unknown identity even with force. Use red/green public install tests proving legacy same-event ambiguity, duplicate matches, overlapping owners, and stale valid receipts cannot append callbacks, change ownership, or publish successful profile evidence; document the tightened compatibility behavior and actionable diagnostics.
+- [x] 2.2 Preserve explicit adoption of uniquely matching unowned groups without native serialization and legitimate insertion into verified absence. Use red/green install/reopen/inspection tests asserting native bytes and modification time remain unchanged during adoption, new absent-event hooks become current, unrelated declarations/settings survive, and ordinary supported owned reconciliation remains functional; include these successful cases in the install guidance.
+
+## 3. Explicit receipt-only update
+
+- [x] 3.1 Extend existing forced targeted update to capture and recheck actual content, old receipt, prior profile, and frozen source before repairing valid stale authority without writing native content. Observe failing public update tests, then verify unforced rejection, forced success with a recovery identifier, current state after reopen, repeated no-op without another mutation event, and unchanged native bytes/modification time; retain rejection of invalid receipts, unresolved groups, and prohibited providers or contexts.
+- [x] 3.2 Report actual update effects using additive native_changed and ownership_changed flags alongside changed, including receipt-only success, content replacement, and current no-op. Verify these public result cases with red/green tests and document that a receipt-only repair changes managed state, requires explicit force, and must be followed by reinspection.
+
+## 4. Restore and interrupted-operation recovery
+
+- [x] 4.1 Extend existing compensation and restoration to verify and recover native content, old receipt, and old profile independently, preserving stale prior authority rather than synthesizing it from source. Use red/green update/restore/reopen tests proving the pre-repair conflict returns, unchanged native content is not rewritten, unrelated hooks survive, and existing-format recovery evidence remains usable; document receipt-only restore behavior.
+- [x] 4.2 Add failure injection before/after receipt save, before/after profile publication, and before completion, plus process interruption after receipt mutation. Implement any recovery gaps exposed by observed failures and verify reopened status retains an unresolved operation/recovery identifier, explicit restore recovers prior evidence, and unverified convergence is never reported as success. Isolate subprocess home/app-data and registry/project/bundle roots and document the public recovery procedure.
+- [x] 4.3 Guard repair and restoration against concurrent changes to selected content, membership/order, receipt, source, and provider eligibility. Use red/green mutation-boundary tests to prove stale authority cannot be published, unrelated concurrent edits are preserved, and unsafe compensation retains pending/partial recovery evidence with diagnostics rather than overwriting another writer.
+
+## 5. Consumer contract and integration verification
+
+- [x] 5.1 Update the public lifecycle example or a focused companion to demonstrate current reuse, outdated update, exact-unowned adoption, verified-absent install, explicitly authorized source-matching conflict repair, and rejection of indeterminate/unsupported targets. Run the example against temporary state and document Powerspec's follow-up adoption, ambiguity handling, explicit hook-repair authorization, dependency pin, and integration cases without editing Powerspec or live hooks.
+- [x] 5.2 Run affected pytest coverage and then the full `uv run pytest` suite and existing `uv run behave features/profile_registry.feature` integration suite. Verify Codex/Claude JSON groups, supported Kimi user TOML, unsupported Kimi project and Pi dedicated-extension boundaries, provider/path/symlink/cross-project checks, offline-owned inspection, and base imports without Click; add only missing cross-component regression cases, record outcomes, and run `openspec validate reconcile-shared-hook-ownership --strict --no-interactive` before completion.
+
+Verification recorded 2026-10-22:
+
+- Observed red/green regressions for incomplete group selection, stale receipt evidence, ambiguous install, positional overwrites, native rewrite during receipt repair, effect flags, competing receipt changes, final-publication races, duplicate requested declarations, and incomplete compensation verification. Existing adoption and restoration behavior already passed its expanded coverage; no artificial failures were introduced for those preserved behaviors.
+- Final focused helper/reconciliation coverage: 59 passed. The earlier affected asset/helper suite passed 134 tests before the final additional edge cases; the final full suite includes all of them.
+- Full suite: `.venv/Scripts/python.exe -m pytest -q --tb=short --basetemp C:/Users/ZackaryW/.tmp/zuat-159423b8`, launched through `uv run --extra cli python`, passed 595 tests with 18 platform skips. The optional CLI extra is required to collect CLI tests. The default longer temporary paths produced 16 Claude bundle-fixture failures; a representative failure also reproduced from an unchanged HEAD archive. The shorter isolated root eliminated all 16 without changing bundle implementation or fixtures.
+- `uv run --extra cli behave features/profile_registry.feature --format progress`: 4 scenarios and 24 steps passed. The positional-repair scenario now asserts rejection and unchanged state, following the user's explicit decision.
+- Both `examples/shared_hook_reconciliation.py` and `examples/source_asset_lifecycle.py` ran successfully through `uv run --extra cli python`.
+- Strict change validation and `git diff --check` passed. The installed legacy zmem runtime could not perform the Node-engine commit-memory validation; computed-memory validation is unavailable.
