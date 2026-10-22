@@ -48,6 +48,55 @@ Native-format fixtures, limitations, and verification evidence are recorded in
 
 ## Source-aware skills and hooks
 
+Shared-hook inspection keeps receipt identity, recorded baseline, observed content,
+and source equality separate. A valid stale receipt with a unique complete group
+already matching the source reports `conflict`, `owned=True`, and
+`source_matches=True`. Partial, duplicate, or competing groups report
+`indeterminate`; independently validated baseline evidence may remain available,
+but it never grants permission to mutate an unresolved target. Neighboring
+declarations are excluded and relative group order remains significant.
+
+Explicit `update_asset(asset, force=True)` can repair that stale receipt without
+rewriting native bytes or changing modification time. Its result has
+`changed=True`, `native_changed=False`, and `ownership_changed=True`. Ordinary
+content updates report their actual effects; current no-ops report all three
+flags false and create no mutation event. Reinspect after completion. Restore the
+returned operation ID to recover the previous content, receipt, and profile
+baseline separately, including the original conflict. Receipt-only restoration
+also leaves unchanged native content untouched. Interrupted updates remain
+visible through `status()` with a recovery ID; use `restore_all` in the original
+context rather than editing private receipts.
+
+Source-group installation now rejects unresolved same-event declarations,
+duplicate matches, and competing ownership even with force, instead of appending
+potentially duplicate callbacks. A stale receipt requires targeted reconciliation.
+Uniquely matching unowned groups can still be explicitly installed/adopted without
+rewriting the native document; verified absent groups can be installed while
+preserving unrelated events and settings.
+
+Explicit array locators do not authorize positional overwrites. If hooks move,
+ZuAT follows their verified identities; it rejects duplicates rather than choosing
+one by index. This replaces the previous forced positional restoration behavior.
+Concurrent changes during publication are rechecked. Unsafe compensation preserves
+the other writer's content/receipt and retains a pending operation; a failure after
+an event was written adds forward failure history instead of rewriting that event.
+
+| Inspection | Consumer action |
+| --- | --- |
+| Current | Reuse |
+| Outdated | Unforced targeted update |
+| Exact unowned match | Explicit install/adopt |
+| Verified absent | Install |
+| Source-matching owned conflict | Explicitly authorized forced targeted update |
+| Indeterminate or unsupported | Stop and report diagnostics |
+
+Run `uv run python examples/shared_hook_reconciliation.py` for an isolated public
+API example covering these decisions, reopen, and restoration. Powerspec's
+follow-up must adopt exact unowned matches, remove its indeterminate-install
+fallback, expose explicit hook-repair authorization without silently broadening
+skill-only force, and pin a verified ZuAT revision. Its integration tests should
+cover stale receipts and rejection without duplicate callbacks.
+
 The public Python additions are:
 
 ```python
