@@ -75,7 +75,12 @@ def write_toml(value: dict[str, object]) -> bytes:
 def contains_fragment(document: dict[str, object], fragment: object, *, key: str = "hooks") -> bool:
     current = document.get(key)
     if isinstance(fragment, dict) and isinstance(current, dict):
-        return all(name in current and all(item in current[name] for item in values) for name, values in fragment.items() if isinstance(values, list) and isinstance(current.get(name), list))
+        return all(
+            isinstance(values, list)
+            and isinstance(current.get(name), list)
+            and all(item in current[name] for item in values)
+            for name, values in fragment.items()
+        )
     if isinstance(fragment, list) and isinstance(current, list):
         return all(item in current for item in fragment)
     return current == fragment
