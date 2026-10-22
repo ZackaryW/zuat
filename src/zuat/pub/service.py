@@ -137,10 +137,10 @@ class Zuat:
         return remove(self, bundle_id, agents=agents, purge=purge)
 
     def update_asset(
-        self, asset: AssetInput, *, force: bool = False
+        self, asset: AssetInput, *, force: bool = False, receipt_only: bool = False
     ) -> OperationResult:
-        """Replace one existing independent asset; force permits conflict, not ambiguity."""
-        return self._assets.update(asset, force=force)
+        """Update an asset; receipt_only forbids native-content replacement during repair."""
+        return self._assets.update(asset, force=force, receipt_only=receipt_only)
 
     def register_extension(self, extension):
         """Register host code on this service without invoking or persisting it."""

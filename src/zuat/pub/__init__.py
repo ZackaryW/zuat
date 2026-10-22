@@ -141,16 +141,18 @@ def update_asset(
     asset: AssetInput,
     *,
     force=False,
+    receipt_only=False,
     root=None,
     home=None,
     project_root=None,
     trust_project=False,
 ):
-    """Update one existing independent asset with verified, restorable before-state."""
+    """Update an asset; receipt_only limits repair to owned source-matching shared hooks."""
     return _call(
         "update_asset",
         asset,
         force=force,
+        receipt_only=receipt_only,
         root=root,
         home=home,
         project_root=project_root,

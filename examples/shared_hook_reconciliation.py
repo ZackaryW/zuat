@@ -20,7 +20,7 @@ def reconcile(state, asset, *, authorize_receipt_repair=False):
     elif kind == "absent" or (kind == "unowned" and inspected.source_matches):
         result = state.install(ZuatRequest(agents=(asset.agent,), assets=(asset,)))
     elif kind == "conflict" and inspected.owned and inspected.source_matches and authorize_receipt_repair:
-        result = state.update_asset(asset, force=True)
+        result = state.update_asset(asset, force=True, receipt_only=True)
     else:
         raise ValueError("Explicit reconciliation is required")
     if not result.ok:

@@ -47,6 +47,34 @@ def stale(current, asset, source, destination):
 
 
 @pytest.mark.parametrize("agent", ["claude", "codex", "kimi"])
+@pytest.mark.parametrize("missing", ["empty", "file", "unrelated"])
+def test_reinstall_verified_absent_owned_group(tmp_path, agent, missing):
+    current, asset, source, destination = setup(tmp_path, agent)
+    with current:
+        request = ZuatRequest(agents=(agent,), assets=(asset,))
+        assert current.install(request).ok
+        unrelated = ([{"event": "Stop", "command": "foreign"}] if agent == "kimi"
+                     else {"Stop": [{"hooks": [{"type": "command", "command": "foreign"}]}]})
+        if missing == "file":
+            destination.unlink()
+        else:
+            destination.write_bytes(encode(agent, unrelated if missing == "unrelated"
+                                           else ([] if agent == "kimi" else {})))
+        observed = current.inspect_asset(asset)
+        assert observed.classification == "absent" and observed.owned
+        result = current.install(request)
+        assert result.ok, result.diagnostics
+        assert current.inspect_asset(asset).classification == "current"
+        before = destination.read_bytes(), destination.stat().st_mtime_ns
+        assert current.install(request).ok
+        assert (destination.read_bytes(), destination.stat().st_mtime_ns) == before
+        if missing != "file":
+            assert "unrelated" in destination.read_text()
+        if missing == "unrelated":
+            assert "foreign" in destination.read_text()
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex", "kimi"])
 def test_stale_receipt_keeps_identity_and_source_match_without_writes(tmp_path, agent):
     current, asset, source, destination = setup(tmp_path, agent)
     with current:
@@ -157,6 +185,96 @@ def test_content_update_reports_both_effects(tmp_path):
         result = current.update_asset(asset)
         assert result.ok, result.diagnostics
         assert result.data == {"changed": True, "native_changed": True, "ownership_changed": True}
+
+
+@pytest.mark.parametrize("agent", ["codex", "claude", "kimi"])
+def test_guarded_receipt_repair_and_repeat(tmp_path, agent):
+    current, asset, source, destination = setup(tmp_path, agent)
+    with current:
+        stale(current, asset, source, destination)
+        before = destination.read_bytes(), destination.stat().st_mtime_ns
+        assert not current.update_asset(asset, receipt_only=True).ok
+        result = current.update_asset(asset, force=True, receipt_only=True)
+        assert result.ok and result.operation_id, result.diagnostics
+        assert result.data["ownership_changed"] and not result.data["native_changed"]
+        assert (destination.read_bytes(), destination.stat().st_mtime_ns) == before
+        history = current.registry.history()
+        repeated = current.update_asset(asset, receipt_only=True)
+        assert repeated.ok and not repeated.data["changed"]
+        assert current.registry.history() == history
+
+
+@pytest.mark.parametrize("boundary", ["before-call", "capture", "replace"])
+def test_guarded_repair_preserves_concurrently_restored_baseline(tmp_path, monkeypatch, boundary):
+    current, asset, source, destination = setup(tmp_path)
+    with current:
+        original = source.read_bytes()
+        baseline = stale(current, asset, source, destination)
+        assert current.inspect_asset(asset).source_matches
+        if boundary == "before-call":
+            destination.write_bytes(original)
+        else:
+            resolver = current._resolver(asset.agent)
+            method = "capture_asset" if boundary == "capture" else "replace_asset"
+            real = getattr(resolver, method)
+            def change(*args, **kwargs):
+                if boundary == "capture":
+                    result = real(*args, **kwargs)
+                    destination.write_bytes(original)
+                    return result
+                destination.write_bytes(original)
+                return real(*args, **kwargs)
+            monkeypatch.setattr(resolver, method, change)
+        result = current.update_asset(asset, force=True, receipt_only=True)
+        assert not result.ok and result.diagnostics
+        assert destination.read_bytes() == original
+        assert current.inspect_asset(asset).baseline_fingerprint == baseline
+
+
+@pytest.mark.parametrize("state", ["absent", "unowned", "outdated", "ambiguous"])
+def test_guarded_repair_rejects_noneligible_hook_state(tmp_path, state):
+    current, asset, source, destination = setup(tmp_path)
+    with current:
+        if state == "unowned":
+            destination.parent.mkdir(parents=True)
+            destination.write_bytes(source.read_bytes())
+        elif state != "absent":
+            assert current.install(ZuatRequest(agents=(asset.agent,), assets=(asset,))).ok
+            if state == "outdated":
+                source.write_bytes(encode(asset.agent, fragment(asset.agent, "new-one", "new-two")))
+            else:
+                destination.write_bytes(encode(asset.agent, fragment(asset.agent, "old-one", "old-one", "old-two")))
+        before = destination.read_bytes() if destination.exists() else None
+        result = current.update_asset(asset, force=True, receipt_only=True)
+        assert not result.ok and result.diagnostics
+        assert (destination.read_bytes() if destination.exists() else None) == before
+
+
+def test_guarded_repair_public_function_forwards_option(tmp_path):
+    from zuat.pub import update_asset
+    current, asset, source, destination = setup(tmp_path)
+    with current:
+        stale(current, asset, source, destination)
+    before = destination.read_bytes(), destination.stat().st_mtime_ns
+    result = update_asset(asset, force=True, receipt_only=True,
+                          root=tmp_path / "registry", home=tmp_path / "home",
+                          project_root=tmp_path / "project")
+    assert result.ok and not result.data["native_changed"], result.diagnostics
+    assert (destination.read_bytes(), destination.stat().st_mtime_ns) == before
+
+
+def test_receipt_only_guard_rejects_current_skill_without_effects(tmp_path):
+    from tests.pub.assets.test_context import service
+    from tests.pub.assets.test_inspection import source_asset
+    asset = source_asset(tmp_path)
+    with service(tmp_path, tmp_path / "project") as current:
+        assert current.install(ZuatRequest(agents=(asset.agent,), assets=(asset,))).ok
+        observed = current.inspect_asset(asset)
+        history = current.registry.history()
+        result = current.update_asset(asset, force=True, receipt_only=True)
+        assert not result.ok and "receipt-only" in " ".join(result.diagnostics)
+        assert current.inspect_asset(asset) == observed
+        assert current.registry.history() == history
 
 
 @pytest.mark.parametrize("agent", ["claude", "codex", "kimi"])

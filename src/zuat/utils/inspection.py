@@ -306,7 +306,9 @@ def replace_target(support, target):
     )
     if target.asset.kind is AssetKind.HOOK and support.shared_hooks:
         document = support.read_document(target.destination)
-        selected = selected_fragment(document, target.fragment)
+        selected = selected_fragment(
+            document, target.fragment if target.fragment is not None else target.source.fragment
+        )
         if selected != target.fragment:
             raise ResolutionError("target changed before hook replacement")
         if selected != target.source.fragment:

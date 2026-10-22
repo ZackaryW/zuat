@@ -56,7 +56,7 @@ already matching the source reports `conflict`, `owned=True`, and
 but it never grants permission to mutate an unresolved target. Neighboring
 declarations are excluded and relative group order remains significant.
 
-Explicit `update_asset(asset, force=True)` can repair that stale receipt without
+Explicit `update_asset(asset, force=True, receipt_only=True)` can repair that stale receipt without
 rewriting native bytes or changing modification time. Its result has
 `changed=True`, `native_changed=False`, and `ownership_changed=True`. Ordinary
 content updates report their actual effects; current no-ops report all three
@@ -70,6 +70,21 @@ context rather than editing private receipts.
 Source-group installation now rejects unresolved same-event declarations,
 duplicate matches, and competing ownership even with force, instead of appending
 potentially duplicate callbacks. A stale receipt requires targeted reconciliation.
+
+The optional `receipt_only` guard is available on both the stateful and module-level
+`update_asset` APIs and defaults to false. It requires a valid owned shared-hook
+group that still matches the source inside the operation. It rejects missing,
+unowned, outdated, ambiguous, and non-shared-hook targets; it does not grant force
+authorization by itself. A current matching owned group remains a no-op. Consumers
+offering receipt repair should use this guard so a concurrent restoration of old
+hooks cannot turn a previously inspected receipt conflict into content replacement.
+
+If a valid receipt remains after the entire native hook group is deleted,
+source-driven `install` recreates the group once absence is verified. Missing
+event keys do not prove that hooks are current. Reinstallation preserves unrelated
+settings and other events, verifies the recreated group, and repeating it does not
+duplicate callbacks. A partially missing or ambiguous group still requires explicit
+resolution rather than guessing which declarations to replace.
 Uniquely matching unowned groups can still be explicitly installed/adopted without
 rewriting the native document; verified absent groups can be installed while
 preserving unrelated events and settings.

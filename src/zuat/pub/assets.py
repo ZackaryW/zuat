@@ -149,7 +149,7 @@ class AssetOperations:
                 diagnostics=(str(error),),
             )
 
-    def update(self, asset, *, force=False):
+    def update(self, asset, *, force=False, receipt_only=False):
         """Capture, replace, verify, and publish as one recoverable operation.
 
         The lock serializes Zuat callers, not external editors: capture and recheck
@@ -166,6 +166,16 @@ class AssetOperations:
                 native, ref = self.target(asset)
                 if native.classification == "indeterminate":
                     raise ResolutionError("; ".join(native.diagnostics))
+                if receipt_only and (
+                    asset.kind != "hook"
+                    or native.fragment is None
+                    or native.record is None
+                    or native.observed_fingerprint != native.source.fingerprint
+                ):
+                    raise ResolutionError(
+                        "receipt-only repair requires an owned shared-hook group "
+                        "whose native content still matches the source"
+                    )
                 if native.classification == "current":
                     return OperationResult(
                         "update-asset", OperationStatus.SUCCESS,
