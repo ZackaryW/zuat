@@ -203,7 +203,7 @@ def test_force_restores_owned_hook_when_its_recorded_locator_is_missing(
         registry.close()
 
 
-def test_force_restores_owned_hooks_to_their_stable_locators(
+def test_force_keeps_owned_hooks_at_their_verified_identity_after_reordering(
     tmp_path: Path,
 ) -> None:
     service, registry, settings = claude_service(tmp_path, ("one", "two"))
@@ -250,7 +250,7 @@ def test_force_restores_owned_hooks_to_their_stable_locators(
         assert [
             item["hooks"][0]["command"]
             for item in updated["hooks"]["SessionStart"]
-        ] == ["one", "two"]
+        ] == ["two", "one"]
     finally:
         registry.close()
 

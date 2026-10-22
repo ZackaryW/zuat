@@ -133,6 +133,8 @@ class AssetOperations:
                 source_matches=native.observed_fingerprint == native.source.fingerprint
                 if native.observed_fingerprint
                 else None,
+                completeness="partial" if native.diagnostics else "complete",
+                diagnostics=native.diagnostics,
             )
         except (ResolutionError, RegistryError, OSError, ValueError) as error:
             return AssetInspection(
@@ -162,9 +164,12 @@ class AssetOperations:
         try:
             with registry.operation(), tempfile.TemporaryDirectory() as temporary:
                 native, ref = self.target(asset)
+                if native.classification == "indeterminate":
+                    raise ResolutionError("; ".join(native.diagnostics))
                 if native.classification == "current":
                     return OperationResult(
-                        "update-asset", OperationStatus.SUCCESS, data={"changed": False}
+                        "update-asset", OperationStatus.SUCCESS,
+                        data={"changed": False, "native_changed": False, "ownership_changed": False}
                     )
                 if native.classification == "absent":
                     raise ResolutionError("target is absent; use install")
@@ -210,6 +215,10 @@ class AssetOperations:
                 # The managed baseline and actual native bytes may differ. Keep
                 # both so restoration can recover a conflict without adopting it.
                 ownership = asdict(native.record) if native.record else None
+                effects = {
+                    "native_changed": native.observed_fingerprint != native.source.fingerprint,
+                    "ownership_changed": native.record is None or native.record.fingerprint != native.source.fingerprint,
+                }
                 if ownership:
                     ownership.pop("destination")
                 metadata = {
@@ -258,6 +267,7 @@ class AssetOperations:
                     before=before,
                     metadata={
                         "state_kind": "asset-update",
+                        **effects,
                         "project_context": project_context(service.project_root)
                         if asset.scope == "project"
                         else None,
@@ -283,6 +293,8 @@ class AssetOperations:
                 registry.store_profile_asset(
                     profile, ref, normalized, intended, after.fingerprint
                 )
+                if asset.kind == "hook":
+                    self.verify_update(asset, native)
                 event = registry.record_asset_operation(
                     OperationKind.UPDATE,
                     OperationOutcome.SUCCESS,
@@ -291,8 +303,10 @@ class AssetOperations:
                     after=(after,),
                     forced=force,
                     operation_id=operation_id,
-                    metadata={"state_kind": "asset-update"},
+                    metadata={"state_kind": "asset-update", **effects},
                 )
+                if asset.kind == "hook":
+                    self.verify_update(asset, native)
                 registry.finish_operation(operation_id, event.outcome)
                 return OperationResult(
                     "update-asset",
@@ -300,27 +314,29 @@ class AssetOperations:
                     operation_id=event.operation_id,
                     profile=profile,
                     assets=(after,),
-                    data={"changed": True},
+                    data={"changed": True, **effects},
                 )
         except (ResolutionError, RegistryError, OSError, ValueError) as error:
             if operation_id:
                 with registry.operation():
-                    compensated = self.compensate(before, profile)
+                    compensated = self.compensate(before, profile, native)
                     outcome = (
                         OperationOutcome.FAILED
                         if compensated
                         else OperationOutcome.INDETERMINATE
                     )
+                    published = any(item.operation_id == operation_id for item in registry.history())
                     event = registry.append_event(
                         OperationKind.UPDATE,
                         outcome,
                         profile=profile,
                         before=before,
-                        operation_id=operation_id,
+                        operation_id=None if published else operation_id,
                         diagnostics=(str(error),),
                         metadata={
                             "state_kind": "asset-update",
                             "compensated": compensated,
+                            "recovery_operation_id": operation_id,
                         },
                     )
                     if compensated:
@@ -330,13 +346,21 @@ class AssetOperations:
                         OperationStatus.FAILED
                         if compensated
                         else OperationStatus.PARTIAL,
-                        operation_id=event.operation_id,
+                        operation_id=operation_id,
                         completeness="complete" if compensated else "partial",
                         diagnostics=(str(error),),
                     )
             return failed("update-asset", str(error))
 
-    def compensate(self, before, profile):
+    def verify_update(self, asset, expected):
+        """Recheck content, authority, and mutable source at publication boundaries."""
+        actual, _ = self.target(asset)
+        if (actual.classification != "current"
+                or actual.source.fingerprint != expected.source.fingerprint
+                or actual.asset.evidence["native_locator"] != expected.asset.evidence["native_locator"]):
+            raise ResolutionError("update changed during publication")
+
+    def compensate(self, before, profile, expected=None):
         """Reuse inverse projections and native verification after a failed update.
 
         Do not call a public restore here: compensation belongs to the same update
@@ -344,6 +368,31 @@ class AssetOperations:
         """
         service = self.service
         try:
+            if expected is not None:
+                # Compensation is not authority to overwrite another writer's
+                # receipt. Only our intended receipt or captured before-state
+                # can be safely rolled back.
+                from zuat.pub.models import AssetInput
+                from zuat.utils.contexts import native_locator
+                from zuat.utils.ownership import OwnershipRecord
+
+                current, _ = self.target(AssetInput(
+                    expected.asset.agent, expected.asset.kind.value, scope=expected.asset.scope,
+                    source=str(expected.source.path), name=expected.asset.name,
+                ))
+                intended = OwnershipRecord(
+                    expected.asset.agent, expected.asset.kind.value, expected.asset.name,
+                    expected.asset.scope, str(expected.destination.resolve()),
+                    expected.source.fingerprint, getattr(expected.source, "fragment", None),
+                    native_locator(expected.asset.evidence["native_locator"])
+                    if expected.asset.kind is AssetKind.HOOK else None,
+                )
+                if current.record not in (expected.record, intended):
+                    return False
+                if (expected.asset.kind is AssetKind.HOOK
+                        and expected.observed_fingerprint == expected.source.fingerprint
+                        and current.observed_fingerprint != expected.observed_fingerprint):
+                    return False
             with tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 service._projections.write_inverse_profile(root, before)
@@ -353,21 +402,10 @@ class AssetOperations:
                     if not service._resolver(plan.agent).materialize(plan).verified:
                         return False
                 service._projections.project_inverse_profile(profile, before)
-                from zuat.pub.models import AssetInput
+                from zuat.utils.evidence import same_recovery_state
 
                 for item in before:
-                    # The archive object has a storage filename, so inspect the
-                    # correctly named inverse projection, not its internal path.
-                    actual, _ = self.target(
-                        AssetInput(
-                            item.ref.agent,
-                            item.ref.kind,
-                            scope=item.ref.scope,
-                            source=str(root / item.evidence["normalized_path"]),
-                            name=item.evidence["asset_name"],
-                        )
-                    )
-                    if f"sha256:{actual.observed_fingerprint}" != item.fingerprint:
+                    if not same_recovery_state(item, self.recovery_evidence(item)):
                         return False
                 return True
         except (ResolutionError, RegistryError, OSError, ValueError):

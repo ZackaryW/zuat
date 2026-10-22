@@ -2,11 +2,12 @@ Feature: Agent assets governed by a private forward-only journal
   Zuat observes native agent state, reconciles named profiles, and exposes only
   stable domain assets and operations.
 
-  Scenario: Adopt, force, uninstall, and audit real-format Claude assets
+  Scenario: Adopt, reject ambiguous force, uninstall, and audit real-format Claude assets
     Given an isolated Claude home with an existing skill and two shared hooks
     When I observe and adopt the existing Claude skill and first hook
     And the adopted Claude hook drifts outside Zuat
-    And I force the adopted Claude hook back to its desired content
+    Then a forced positional repair is rejected without changing Claude state
+    When I restore the original Claude declaration externally
     And I uninstall that Claude hook by its stable reference
     Then the unrelated Claude hook and setting remain unchanged
     And the Claude lifecycle operations appear in causal journal order

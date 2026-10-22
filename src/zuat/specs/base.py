@@ -241,6 +241,8 @@ class ResolverSupport:
             if asset.evidence.get("targeted"):
                 from zuat.utils.inspection import inspect_target
                 target = inspect_target(self, asset.path, asset.kind, asset.scope, name=asset.name)
+                if target.classification == "indeterminate":
+                    raise ResolutionError("; ".join(target.diagnostics))
                 if target.classification in {"conflict", "unowned"} and plan.conflict_policy is ConflictPolicy.ABORT:
                     raise ResolutionError("force is required for conflicting or unowned replacement")
                 continue
@@ -253,11 +255,25 @@ class ResolverSupport:
             source = SkillSource.from_path(asset.path) if asset.kind is AssetKind.SKILL else self.hook_loader(asset.path)
             if asset.kind is AssetKind.HOOK and self.shared_hooks:
                 assert self.read_document and self.contains
+                self._preflight_hook_install(asset, plan.conflict_policy)
                 inspection = inspect_shared_hook(source=source, destination=destination, store=selected_store, read_document=self.read_document, contains=self.contains, scope=scope)
             else:
                 inspection = inspect_dedicated(source, destination, record)
             if inspection.status.value in {"unmanaged", "conflict"} and plan.conflict_policy is ConflictPolicy.ABORT:
                 raise ResolutionError(f"{self.agent.value} {asset.kind.value} {asset.name}: {inspection.status.value}")
+
+    def _preflight_hook_install(self, asset, policy):
+        """Require semantic identity even when a caller supplies an array locator."""
+        from zuat.utils.inspection import inspect_target
+        target = inspect_target(self, asset.path, asset.kind, asset.scope, name=asset.name)
+        if target.classification == "indeterminate":
+            raise ResolutionError("; ".join(target.diagnostics))
+        if target.classification == "conflict" and (
+            target.observed_fingerprint == target.source.fingerprint
+            or policy is ConflictPolicy.ABORT
+        ):
+            raise ResolutionError("hook ownership conflict; use explicit targeted update")
+        return target
 
     def materialize(self, plan: ResolutionPlan) -> Materialization:
         if plan.agent != self.agent.value:
@@ -333,6 +349,8 @@ class ResolverSupport:
             from zuat.utils.inspection import inspect_target, replace_target
             from zuat.specs.native import LifecycleResult
             target = inspect_target(self, asset.path, asset.kind, asset.scope, name=asset.name)
+            if target.classification == "indeterminate":
+                raise ResolutionError("; ".join(target.diagnostics))
             if target.classification != "absent":
                 replace_target(self, target)
                 return LifecycleResult("install", "updated", target.destination)
@@ -346,6 +364,16 @@ class ResolverSupport:
             source = SkillSource.from_path(asset.path) if asset.kind is AssetKind.SKILL else self.hook_loader(asset.path)
         if asset.kind is AssetKind.HOOK and self.shared_hooks:
             assert self.read_document and self.write_document and self.contains and self.add and self.remove
+            if action.operation == "install":
+                from dataclasses import replace
+                from zuat.utils.inspection import replace_target
+                from zuat.specs.native import LifecycleResult
+                target = self._preflight_hook_install(asset, plan.conflict_policy)
+                if target.classification == "current":
+                    return LifecycleResult("install", "current", target.destination)
+                if target.classification != "absent":
+                    replace_target(self, replace(target, asset=asset))
+                    return LifecycleResult("install", "updated", target.destination)
             locator = asset.evidence.get("native_locator")
             return apply_shared_hook(operation=action.operation, source=source, destination=destination, store=store, name=asset.name, scope=scope, policy=plan.conflict_policy, read_document=self.read_document, write_document=self.write_document, contains=self.contains, add=self.add, remove=self.remove, native_locator=native_locator(locator) if isinstance(locator, str) else None)
         return apply_dedicated(operation=action.operation, source=source, destination=destination, store=store, kind=asset.kind.value, name=asset.name, scope=scope, policy=plan.conflict_policy)

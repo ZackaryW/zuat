@@ -111,8 +111,10 @@ def drift_claude_hook(context) -> None:
     context.claude_settings.write_text(json.dumps(document), encoding="utf-8")
 
 
-@when("I force the adopted Claude hook back to its desired content")
+@then("a forced positional repair is rejected without changing Claude state")
 def force_claude_hook(context) -> None:
+    before = context.claude_settings.read_bytes()
+    profile = context.registry.projected_state().profile("default")
     source = Path(context.temporary.name) / "desired-hook.json"
     source.write_text(
         json.dumps(
@@ -141,8 +143,17 @@ def force_claude_hook(context) -> None:
             force=True,
         )
     )
-    assert forced.status is OperationStatus.SUCCESS
+    assert forced.status is OperationStatus.FAILED
+    assert context.claude_settings.read_bytes() == before
+    assert context.registry.projected_state().profile("default") == profile
     context.force_operation = forced.operation_id
+
+
+@when("I restore the original Claude declaration externally")
+def restore_claude_declaration(context) -> None:
+    document = json.loads(context.claude_settings.read_text(encoding="utf-8"))
+    document["hooks"]["SessionStart"][0]["hooks"][0]["command"] = "first"
+    context.claude_settings.write_text(json.dumps(document), encoding="utf-8")
 
 
 @when("I uninstall that Claude hook by its stable reference")
@@ -176,9 +187,8 @@ def verify_claude_history(context) -> None:
     assert forced.forced
     assert removed.kind is OperationKind.UNINSTALL
     assert adopted.sequence < forced.sequence < removed.sequence
-    assert all(
-        item.outcome is OperationOutcome.SUCCESS for item in (adopted, forced, removed)
-    )
+    assert forced.outcome is OperationOutcome.REJECTED
+    assert adopted.outcome is removed.outcome is OperationOutcome.SUCCESS
 
 
 @given("an isolated Codex home with a version one skill and two named profiles")

@@ -23,6 +23,7 @@ class TargetInspection:
     classification: str
     observed_fingerprint: str | None
     fragment: object = None
+    diagnostics: tuple[str, ...] = ()
 
 
 def fragment_fingerprint(fragment):
@@ -56,60 +57,107 @@ def combine_fragments(parts, mapping):
     return [entry for part in parts for entry in part]
 
 
-def selected_fragment(document, wanted):
-    """Resolve an exact declaration first; never use incidental array position."""
-    hooks = document.get("hooks", {} if isinstance(wanted, dict) else [])
+@dataclass(frozen=True)
+class GroupSelection:
+    """Pure complete-group evidence; positions are transient document offsets."""
+
+    status: str
+    fragment: object = None
+    positions: tuple[int, ...] = ()
+
+
+def exact_group(document, wanted):
+    """Select mapping/list declarations one-to-one, preserving native order.
+
+    An empty event is absent; differing same-event candidates are ambiguous.
+    Partial matches never identify an entire group. Inputs are never mutated.
+    """
+    mapping = isinstance(wanted, dict)
+    hooks = document.get("hooks", {} if mapping else [])
     parts = fragment_parts(wanted)
-    if len(parts) > 1:
-        selected = [selected_fragment(document, part) for part in parts]
-        keys = [fragment_fingerprint(part) for part in selected if part is not None]
-        if len(keys) != len(set(keys)):
-            raise ResolutionError("ambiguous overlapping hook declarations")
-        observed = [
-            part for part in fragment_parts(hooks) if fragment_fingerprint(part) in keys
-        ]
-        return (
-            combine_fragments(observed, isinstance(wanted, dict)) if observed else None
-        )
-    if isinstance(wanted, dict):
-        if len(wanted) != 1:
-            raise ResolutionError("targeted hooks require one declaration")
-        event, entries = next(iter(wanted.items()))
-        if len(entries) != 1 or not isinstance(hooks, dict):
-            raise ResolutionError(
-                "targeted hooks require one declaration and valid native structure"
-            )
-        candidates = hooks.get(event, [])
-        wrap = lambda value: {event: [value]}
-        expected = entries[0]
-    elif isinstance(wanted, list) and len(wanted) == 1 and isinstance(hooks, list):
-        expected = wanted[0]
-        if not isinstance(expected, dict) or any(
-            not isinstance(item, dict) for item in hooks
-        ):
-            raise ResolutionError("malformed native hook declarations")
-        candidates = [
-            item for item in hooks if item.get("event") == expected.get("event")
-        ]
-        wrap = lambda value: [value]
-    else:
-        raise ResolutionError("targeted hooks require one declaration")
-    if not isinstance(candidates, list) or any(
-        not isinstance(item, dict) for item in candidates
-    ):
+    if not parts or isinstance(hooks, dict) != mapping:
         raise ResolutionError("malformed native hook declarations")
-    exact = [item for item in candidates if item == expected]
-    if len(exact) > 1:
-        raise ResolutionError("ambiguous duplicate hook declarations")
-    if exact:
-        return wrap(exact[0])
-    if not candidates:
+    keys = [fragment_fingerprint(part) for part in parts]
+    if len(keys) != len(set(keys)):
+        raise ResolutionError("ambiguous duplicate requested hook declarations")
+    native = fragment_parts(hooks)
+    positions = []
+    for part in parts:
+        matches = [i for i, candidate in enumerate(native) if candidate == part]
+        if len(matches) > 1 or any(i in positions for i in matches):
+            return GroupSelection("ambiguous")
+        positions.extend(matches)
+    positions = tuple(sorted(positions))
+    selected = combine_fragments([native[i] for i in positions], mapping)
+    if len(positions) == len(parts):
+        return GroupSelection("complete", selected, positions)
+    if positions:
+        return GroupSelection("partial", selected, positions)
+    events = {_part_event(part) for part in parts}
+    if any(_part_event(part) in events for part in native):
+        return GroupSelection("ambiguous")
+    return GroupSelection("absent")
+
+
+def _part_event(part):
+    return next(iter(part)) if isinstance(part, dict) else part[0].get("event")
+
+
+def selected_fragment(document, wanted):
+    """Resolve complete groups; allow only a sole candidate for edited members."""
+    exact = exact_group(document, wanted)
+    if exact.status == "complete":
+        return exact.fragment
+    if exact.status == "absent":
         return None
-    # A single event declaration is unambiguous even if its body was edited.
-    # Multiple edited candidates do not grant authority to choose one.
-    if len(candidates) == 1:
-        return wrap(candidates[0])
-    raise ResolutionError("ambiguous hook declaration identity")
+    mapping = isinstance(wanted, dict)
+    native = fragment_parts(document.get("hooks", {} if mapping else []))
+    positions = []
+    for part in fragment_parts(wanted):
+        matches = [i for i, candidate in enumerate(native) if candidate == part]
+        if not matches:
+            matches = [i for i, candidate in enumerate(native)
+                       if _part_event(candidate) == _part_event(part)]
+        if len(matches) != 1 or matches[0] in positions:
+            raise ResolutionError("ambiguous or incomplete hook declaration group")
+        positions.extend(matches)
+    return combine_fragments([native[i] for i in sorted(positions)], mapping)
+
+
+def resolve_hook_group(document, desired, record, records, destination, scope):
+    """Reconcile exact content with receipt identity, without granting authority."""
+    source = exact_group(document, desired)
+    if record is None:
+        if source.status not in {"complete", "absent"}:
+            raise ResolutionError("ambiguous or incomplete unowned hook group")
+        selected = source.fragment
+    else:
+        baseline = exact_group(document, record.fragment)
+        native = fragment_parts(document.get("hooks", {} if isinstance(desired, dict) else []))
+        surviving = {i for i, part in enumerate(native) if part in fragment_parts(record.fragment)}
+        if source.status == "complete" and not surviving.issubset(source.positions):
+            raise ResolutionError("competing baseline and source hook groups")
+        if baseline.status == "complete":
+            source_members = {i for i, part in enumerate(native) if part in fragment_parts(desired)}
+            if not source_members.issubset(baseline.positions):
+                raise ResolutionError("competing baseline and source hook groups")
+            selected = baseline.fragment
+        elif source.status == "complete":
+            selected = source.fragment
+        else:
+            selected = selected_fragment(document, record.fragment)
+    if selected is not None:
+        members = fragment_parts(selected)
+        for other in records:
+            if other == record or other.scope != scope or Path(other.destination) != destination.resolve():
+                continue
+            if other.fragment is not None and any(part in members for part in fragment_parts(other.fragment)):
+                raise ResolutionError("hook group overlaps another ownership claim")
+            if other.fragment is not None and exact_group(document, other.fragment).status != "complete":
+                events = {_part_event(part) for part in fragment_parts(other.fragment)}
+                if any(_part_event(part) in events for part in members):
+                    raise ResolutionError("hook group has an unresolved competing ownership claim")
+    return selected
 
 
 def resolve_source(support, source_path, kind, scope, *, name=None, locator=None):
@@ -204,9 +252,13 @@ def inspect_target(support, source_path, kind, scope, *, name=None, locator=None
         ):
             raise ResolutionError("invalid ownership fragment baseline")
         document = support.read_document(destination)
-        fragment = selected_fragment(
-            document, record.fragment if record else source.fragment
-        )
+        try:
+            fragment = resolve_hook_group(
+                document, source.fragment, record, store.records("hook"), destination, scope.value
+            )
+        except ResolutionError as error:
+            return TargetInspection(asset, source, destination, record, "indeterminate", None,
+                                    diagnostics=(str(error),))
         actual = fragment_fingerprint(fragment) if fragment is not None else None
     else:
         actual = (
@@ -242,9 +294,10 @@ def replace_target(support, target):
         target.asset.scope,
         name=target.asset.name,
     )
-    if (fresh.observed_fingerprint, fresh.record) != (
+    if (fresh.observed_fingerprint, fresh.record, fresh.source.fingerprint) != (
         target.observed_fingerprint,
         target.record,
+        target.source.fingerprint,
     ):
         raise ResolutionError("target changed during update preflight")
     scope = Scope(target.asset.scope)
@@ -256,10 +309,11 @@ def replace_target(support, target):
         selected = selected_fragment(document, target.fragment)
         if selected != target.fragment:
             raise ResolutionError("target changed before hook replacement")
-        updated = support.add(
-            support.remove(document, selected), target.source.fragment
-        )
-        atomic_write(target.destination, support.write_document(updated))
+        if selected != target.source.fragment:
+            updated = support.add(
+                support.remove(document, selected), target.source.fragment
+            )
+            atomic_write(target.destination, support.write_document(updated))
         if (
             selected_fragment(
                 support.read_document(target.destination), target.source.fragment
