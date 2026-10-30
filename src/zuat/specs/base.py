@@ -30,6 +30,7 @@ from zuat.utils.lifecycle import (
     plugin_filename,
 )
 from zuat.utils.assets import collect_files, fingerprint
+from zuat.utils.hook_documents import FragmentHookDocument
 from zuat.utils.mutation import atomic_write, remove_absent
 from zuat.utils.ownership import OwnershipStore
 from zuat.utils.results import materialize_plan
@@ -63,6 +64,7 @@ class ResolverSupport:
         add: Callable[[dict[str, object], object], dict[str, object]] | None = None,
         remove: Callable[[dict[str, object], object], dict[str, object]] | None = None,
         plugin_adapter: PluginAdapter | None = None,
+        hook_document=None,
     ) -> None:
         self.agent = agent
         self.home = Path(home).expanduser().resolve() if home is not None else Path.home().resolve()
@@ -85,6 +87,7 @@ class ResolverSupport:
         self.add = add
         self.remove = remove
         self._plugin_adapter = plugin_adapter
+        self.hook_document = hook_document or FragmentHookDocument()
 
     def bind(self, registry_root: Path) -> OwnershipStore:
         if self.state_root is None:
@@ -144,6 +147,7 @@ class ResolverSupport:
                     hook_loader=self.hook_loader,
                     scope=scope,
                     context=self.context,
+                    shape=self.hook_document,
                 )
             else:
                 found, failures = observe_extensions(
@@ -373,5 +377,5 @@ class ResolverSupport:
                 status = "installed" if target.classification == "absent" else "updated"
                 return LifecycleResult("install", status, target.destination)
             locator = asset.evidence.get("native_locator")
-            return apply_shared_hook(operation=action.operation, source=source, destination=destination, store=store, name=asset.name, scope=scope, policy=plan.conflict_policy, read_document=self.read_document, write_document=self.write_document, contains=self.contains, add=self.add, remove=self.remove, native_locator=native_locator(locator) if isinstance(locator, str) else None)
+            return apply_shared_hook(operation=action.operation, source=source, destination=destination, store=store, name=asset.name, scope=scope, policy=plan.conflict_policy, read_document=self.read_document, write_document=self.write_document, contains=self.contains, add=self.add, remove=self.remove, native_locator=native_locator(locator) if isinstance(locator, str) else None, shape=self.hook_document)
         return apply_dedicated(operation=action.operation, source=source, destination=destination, store=store, kind=asset.kind.value, name=asset.name, scope=scope, policy=plan.conflict_policy)

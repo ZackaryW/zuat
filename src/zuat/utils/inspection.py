@@ -253,7 +253,7 @@ def inspect_target(support, source_path, kind, scope, *, name=None, locator=None
             raise ResolutionError("invalid ownership fragment baseline")
         document = support.read_document(destination)
         try:
-            fragment = resolve_hook_group(
+            fragment = support.hook_document.group(
                 document, source.fragment, record, store.records("hook"), destination, scope.value
             )
         except ResolutionError as error:
@@ -306,7 +306,7 @@ def replace_target(support, target):
     )
     if target.asset.kind is AssetKind.HOOK and support.shared_hooks:
         document = support.read_document(target.destination)
-        selected = selected_fragment(
+        selected = support.hook_document.select(
             document, target.fragment if target.fragment is not None else target.source.fragment
         )
         if selected != target.fragment:
@@ -317,7 +317,7 @@ def replace_target(support, target):
             )
             atomic_write(target.destination, support.write_document(updated))
         if (
-            selected_fragment(
+            support.hook_document.select(
                 support.read_document(target.destination), target.source.fragment
             )
             != target.source.fragment

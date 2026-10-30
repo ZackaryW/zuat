@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Callable, Iterable
 from hashlib import sha256
 from pathlib import Path
@@ -22,7 +21,6 @@ from zuat.specs.native import (
 from zuat.utils.assets import collect_files, fingerprint
 from zuat.utils.mutation import atomic_write, mirror_files, remove_absent, remove_tree, replace_tree
 from zuat.utils.ownership import OwnershipRecord, OwnershipStore
-from zuat.utils.documents import remove_fragment_at_locator, replace_fragment_at_locator
 from zuat.utils.contexts import contextual_locator, scope_path
 
 
@@ -129,67 +127,27 @@ def observe_shared_hooks(
     scope: Scope,
     context: str | None = None,
     store: OwnershipStore | None = None,
+    shape,
 ) -> tuple[list[Asset], list[str]]:
     relative = scope_path(scope.value, context) / "hooks"
     desired = registry_root / relative
     assets: list[Asset] = []
-    rejected: list[str] = []
     observed: set[str] = set()
     try:
         document = read_document(native_path)
     except (ResolutionError, OSError, ValueError) as error:
         remove_absent(desired, observed)
         return assets, [f"hooks: {error}"]
-    hooks = document.get("hooks")
-    fragments: list[tuple[str, object, str]] = []
-    if hooks is None:
+    fragments, rejected = shape.entries(document)
+    if not fragments and not rejected:
         remove_absent(desired, observed)
         return assets, rejected
-    if isinstance(hooks, dict):
-        for event, entries in hooks.items():
-            if not isinstance(event, str) or not isinstance(entries, list):
-                rejected.append("hooks: native hooks mapping has an unsupported shape")
-                continue
-            slug = re.sub(r"[^A-Za-z0-9._-]+", "-", event).strip("-") or "event"
-            for index, entry in enumerate(entries):
-                if not isinstance(entry, dict):
-                    rejected.append(f"hooks: {event}/{index} is not an object")
-                    continue
-                fragments.append(
-                    (f"{slug}-{index:03d}", {event: [entry]}, f"hooks/{event}/{index}")
-                )
-    elif isinstance(hooks, list):
-        for index, entry in enumerate(hooks):
-            if not isinstance(entry, dict):
-                rejected.append(f"hooks: {index} is not an object")
-                continue
-            event = str(entry.get("event", "hook"))
-            slug = re.sub(r"[^A-Za-z0-9._-]+", "-", event).strip("-") or "hook"
-            fragments.append(
-                (f"{slug}-{index:03d}", [entry], f"hooks/{index}")
-            )
-    else:
-        rejected.append("hooks: native hooks value has an unsupported shape")
     if store:
-        from zuat.utils.inspection import fragment_parts, fragment_fingerprint, selected_fragment
-        groups = []
-        claimed = set()
-        for record in store.records("hook"):
-            if record.scope != scope.value or Path(record.destination) != native_path.resolve():
-                continue
-            try:
-                if len(fragment_parts(record.fragment)) <= 1:
-                    continue
-                actual = selected_fragment(document, record.fragment)
-                if actual is None:
-                    continue
-                keys = {fragment_fingerprint(part) for part in fragment_parts(actual)}
-                if claimed.intersection(keys):
-                    raise ResolutionError("ambiguous overlapping owned hook groups")
-                claimed.update(keys)
-                groups.append((record.name, actual, record.native_locator or f"hooks/{record.name}"))
-            except ResolutionError as error:
-                rejected.append(str(error))
+        from zuat.utils.inspection import fragment_fingerprint
+        owned = [record for record in store.records("hook")
+                 if record.scope == scope.value and Path(record.destination) == native_path.resolve()]
+        groups, claimed, failures = shape.claim_owned(document, owned)
+        rejected.extend(failures)
         fragments = [item for item in fragments if fragment_fingerprint(item[1]) not in claimed] + groups
     for name, fragment, native_locator in fragments:
         matches = [record for record in store.records("hook") if record.scope == scope.value
@@ -372,19 +330,11 @@ def apply_shared_hook(
     add: Callable[[dict[str, object], object], dict[str, object]],
     remove: Callable[[dict[str, object], object], dict[str, object]],
     native_locator: str | None = None,
+    shape,
 ) -> LifecycleResult:
     document = read_document(destination)
     record = store.load("hook", name, scope.value)
-    locator_parts = native_locator.split("/") if native_locator else []
-    positional_locator = (
-        native_locator
-        if (
-            len(locator_parts) in {2, 3}
-            and locator_parts[0] == "hooks"
-            and locator_parts[-1].isdigit()
-        )
-        else None
-    )
+    positional_locator = shape.positional(native_locator)
     if operation == "remove":
         if record is None:
             if policy is ConflictPolicy.ABORT and destination.exists():
@@ -392,7 +342,7 @@ def apply_shared_hook(
             if source is None or not contains(document, source.fragment):
                 return LifecycleResult("remove", "absent", destination)
             updated = (
-                remove_fragment_at_locator(document, native_locator)
+                shape.remove_at(document, native_locator)
                 if native_locator
                 else remove(document, source.fragment)
             )
@@ -403,7 +353,7 @@ def apply_shared_hook(
         if record.fragment is None or not contains(document, record.fragment):
             if policy is ConflictPolicy.ABORT or not native_locator:
                 raise NativeConflictError(f"owned hook changed outside Zuat: {name}")
-            updated = remove_fragment_at_locator(document, native_locator)
+            updated = shape.remove_at(document, native_locator)
         else:
             updated = remove(document, record.fragment)
         atomic_write(destination, write_document(updated))
@@ -417,7 +367,7 @@ def apply_shared_hook(
     locator_matches = True
     if positional_locator:
         try:
-            positioned = replace_fragment_at_locator(
+            positioned = shape.replace_at(
                 document, positional_locator, source.fragment
             )
             locator_matches = positioned == document
@@ -453,7 +403,7 @@ def apply_shared_hook(
         raise NativeConflictError(f"hook postcondition verification failed: {name}")
     if positional_locator:
         try:
-            if replace_fragment_at_locator(
+            if shape.replace_at(
                 verified, positional_locator, source.fragment
             ) != verified:
                 raise NativeConflictError(
