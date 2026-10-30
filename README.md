@@ -34,8 +34,9 @@ call `artifact_status`, `resolve_artifacts`, `set_artifact_policy`, or
 Returned paths must remain inside its verified root. Policy controls Zuat
 resolution only; it cannot enable a natively disabled plugin.
 
-Native plugin capabilities differ. Kimi currently supports discovery, not lifecycle
-mutation. The inspected Claude and Codex managers do not support exact-version
+Native plugin capabilities differ. Kimi and Antigravity currently support discovery,
+not lifecycle mutation; Antigravity plugins are read from `~/.gemini/config/plugins`
+and `config.json` without running `agy`. The inspected Claude and Codex managers do not support exact-version
 restoration; Pi supports verified pinned npm versions. Missing identity/version
 evidence remains unresolved, and unavailable revisions never fall back to latest.
 Failed provider discovery is incomplete and does not ingest potentially
@@ -126,6 +127,17 @@ Compound hook sources retain their declared group and preserve unrelated hooks.
 Each agent keeps its native formats and scope restrictions; Kimi project hooks
 remain unsupported.
 
+Antigravity stores hooks as named entries (`{"<name>": {"SessionStart": [...]}}`) in
+`~/.gemini/config/hooks.json` or `<project>/.agents/hooks.json`. A source file must
+be `<name>.json` whose only top-level key is `<name>`; the name is the ownership
+identity, so there are no positional groups. A duplicated top-level name, a
+non-object document, or a non-object entry is `indeterminate`, even with force.
+Antigravity skills install to `~/.gemini/config/skills` or `<project>/.agents/skills`.
+
+`SUPPORTED_AGENTS` now ends with `antigravity`. Requests and commands that omit
+agents select every supported agent, so they include Antigravity; pass agents
+explicitly to keep a narrower scope.
+
 `AssetInspection` is frozen and reports `classification`, identity and optional
 `asset_ref`, source/observed/baseline SHA-256 fingerprints, `owned`, immutable
 `ownership_evidence`, `source_matches`, `completeness`, and `diagnostics`.
@@ -203,7 +215,7 @@ locate_skill(agent, name, *, cwd, home=None, selected=None) -> SkillLocation
 Answers "which installed copy of skill `name` does `agent` use when invoked from
 `cwd`?" without a registry. It never creates or updates Zuat state, installs,
 adopts, copies or executes anything, runs a native command, or fetches sources. It
-does not import `Zuat`. `agent` is required (`codex`, `claude`, `kimi`, `pi`); no
+does not import `Zuat`. `agent` is required (`codex`, `claude`, `kimi`, `pi`, `antigravity`); no
 agent is inferred or searched implicitly. `home` selects the native home for
 isolated tests. `name` is the name declared in `SKILL.md`, which may differ from
 its folder. Only that file's metadata is read, never the skill's other resources.
@@ -231,6 +243,7 @@ Selection follows only verified native behavior (host documentation checked
 | Codex | `~/.codex/skills`, `~/.agents/skills`; `.agents/skills` in `cwd` and parents to the repository root; symlinks followed | never chosen by Zuat; unresolved unless `[[skills.config]] enabled = false` in `~/.codex/config.toml` leaves one (`native-config`) |
 | Kimi | `~/.kimi-code/skills`, `~/.agents/skills`; `.kimi-code/skills`, `.agents/skills` at the project root (nearest `.git` ancestor) | project beats user; two copies in one scope are unresolved; symlinks unsupported |
 | Pi | `~/.pi/agent/skills`, `~/.agents/skills`; `.pi/skills`, `.agents/skills` in `cwd` and parents | unresolved (documented "first found wins" order is not yet verified against Pi's source); symlinks unsupported |
+| Antigravity | `~/.gemini/config/skills`, `~/.gemini/antigravity-cli/skills`, legacy `~/.gemini/antigravity/skills`; `skills` under `.agents`, `.agent`, `_agents` or `_agent` in `cwd` and parents to the repository root | project beats user; two copies in one scope or at two project levels are unresolved; symlinks unsupported |
 
 When the host already reported which copy it loaded, pass that path (the skill
 directory or its `SKILL.md`) as `selected`. It is accepted only if it is a real
@@ -240,8 +253,11 @@ Limitations: plugin-provided skills, Claude skills in subdirectories that load
 lazily during a session, bundled/built-in skills, and `KIMI_CODE_HOME` are not
 modeled. Locations Zuat does not model but could shadow a copy are checked, and a
 match there makes the result `unresolved` naming that location: Claude's managed
-settings directory, Codex's `/etc/codex/skills`, and Kimi's `extra_skill_dirs`.
-Pi's package, settings and `--skill` sources are not yet checked.
+settings directory, Codex's `/etc/codex/skills`, Kimi's `extra_skill_dirs`, and
+directories declared by Antigravity `skills.json` files (workspace and
+`~/.gemini/config`, following `inherits`; an unreadable declaration also makes the
+result unresolved). Antigravity built-in skills are not modeled. Pi's package,
+settings and `--skill` sources are not yet checked.
 
 Run `python examples/installed_skill_lookup.py` for a complete example that uses
 only a temporary home and project.
@@ -295,7 +311,7 @@ Bootstrap is user-scope only. Codex and Claude use automatically registered loca
 catalogs; Pi uses a registered local package route. Pi's generated-directory path
 is transient routing, not its durable plugin ID, and arbitrary third-party local
 packages do not acquire a bundle identity from their manifest name alone. Kimi
-bootstrap is unsupported: there is no loose-skill fallback. Durable Pi bundle IDs
+and Antigravity bootstrap are unsupported: there is no loose-skill fallback. Durable Pi bundle IDs
 are not native install paths; use `bootstrap_bundle` to install a selected build.
 Omitted agent selection
 uses supported available managers; no available manager is a non-success result.
