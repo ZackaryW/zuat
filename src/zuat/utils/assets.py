@@ -152,6 +152,31 @@ def load_json_hook(path: Path, *, agent: Agent) -> HookSource:
     )
 
 
+def load_keyed_json_hook(path: Path, *, agent: Agent) -> HookSource:
+    """A keyed hook source is exactly the entry it contributes: ``{stem: {...}}``."""
+    if path.is_symlink():
+        raise InvalidAssetError(f"hook is a symbolic link: {path}")
+    if not path.is_file() or path.suffix != ".json":
+        raise InvalidAssetError("keyed JSON hooks must be JSON files")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeError) as error:
+        raise InvalidAssetError(f"invalid JSON hook: {error}") from error
+    if (
+        not isinstance(document, dict)
+        or list(document) != [path.stem]
+        or not isinstance(document[path.stem], dict)
+    ):
+        raise InvalidAssetError("keyed hook JSON requires exactly one object entry named for its file")
+    return _hook_source(
+        path,
+        agent=agent,
+        format_name="json",
+        fragment=document,
+        semantic=True,
+    )
+
+
 def load_toml_hook(path: Path) -> HookSource:
     if path.is_symlink():
         raise InvalidAssetError(f"hook is a symbolic link: {path}")

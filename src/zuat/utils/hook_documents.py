@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 
 from zuat.specs.interface import ResolutionError
+from zuat.specs.native import InvalidAssetError
 from zuat.utils.documents import remove_fragment_at_locator, replace_fragment_at_locator
 
 
@@ -92,3 +94,67 @@ class FragmentHookDocument:
 
     def replace_at(self, document, locator, fragment):
         return replace_fragment_at_locator(document, locator, fragment)
+
+
+class KeyedHookDocument:
+    """Top-level entries keyed by hook name; the name is the ownership identity.
+
+    There are no array positions to arbitrate, so a fragment is always the one
+    ``{name: entry}`` pair and locators are ``hooks/<name>``.
+    """
+
+    @staticmethod
+    def _name(fragment) -> str:
+        if not isinstance(fragment, dict) or len(fragment) != 1:
+            raise ResolutionError("keyed hook fragment must name exactly one hook")
+        return next(iter(fragment))
+
+    @staticmethod
+    def _locator_name(locator: str) -> str:
+        parts = locator.split("/", 1) if locator else []
+        if len(parts) != 2 or parts[0] != "hooks" or not parts[1]:
+            raise InvalidAssetError(f"invalid hook locator: {locator}")
+        return parts[1]
+
+    def group(self, document, desired, record, records, destination, scope):
+        return self.select(document, desired)
+
+    def select(self, document, wanted):
+        name = self._name(wanted)
+        if name not in document:
+            return None
+        if not isinstance(document[name], dict):
+            raise ResolutionError(f"hook {name!r} is not an object")
+        return {name: document[name]}
+
+    def entries(self, document) -> tuple[list[tuple[str, object, str]], list[str]]:
+        entries: list[tuple[str, object, str]] = []
+        rejected: list[str] = []
+        for name, value in document.items():
+            if not isinstance(value, dict):
+                rejected.append(f"hooks: {name} is not an object")
+                continue
+            entries.append((_slug(name, "hook"), {name: value}, f"hooks/{name}"))
+        return entries, rejected
+
+    def claim_owned(self, document, records):
+        return [], set(), []
+
+    def positional(self, locator: str | None) -> str | None:
+        return None
+
+    def remove_at(self, document, locator):
+        name = self._locator_name(locator)
+        if name not in document:
+            raise InvalidAssetError(f"hook locator does not exist: {locator}")
+        result = deepcopy(document)
+        del result[name]
+        return result
+
+    def replace_at(self, document, locator, fragment):
+        name = self._locator_name(locator)
+        if name not in document or self._name(fragment) != name:
+            raise InvalidAssetError(f"hook locator does not exist: {locator}")
+        result = deepcopy(document)
+        result[name] = deepcopy(fragment[name])
+        return result

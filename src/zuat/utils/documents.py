@@ -72,6 +72,62 @@ def write_toml(value: dict[str, object]) -> bytes:
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
+class _Pairs(dict):
+    duplicate: str | None = None
+
+
+def _pairs(items) -> _Pairs:
+    result = _Pairs()
+    for key, value in items:
+        if key in result and result.duplicate is None:
+            result.duplicate = key
+        result[key] = value
+    return result
+
+
+def read_keyed_json(path: Path) -> dict[str, object]:
+    """Read a name-keyed hook document, refusing ambiguous top-level names.
+
+    Stock JSON parsing keeps the last duplicate silently, which would let two
+    declarations claim one hook name; ownership by name requires rejecting it.
+    """
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+        value = json.loads(text, object_pairs_hook=_pairs)
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise InvalidAssetError(f"invalid JSON document: {path}") from error
+    if not isinstance(value, dict):
+        raise InvalidAssetError(f"JSON document must be an object: {path}")
+    if value.duplicate is not None:
+        raise InvalidAssetError(f"duplicate hook name {value.duplicate!r}: {path}")
+    return json.loads(text)
+
+
+def contains_keyed(document: dict[str, object], fragment: object) -> bool:
+    return isinstance(fragment, dict) and all(
+        name in document and document[name] == value for name, value in fragment.items()
+    )
+
+
+def add_keyed(document: dict[str, object], fragment: object) -> dict[str, object]:
+    if not isinstance(fragment, dict):
+        raise InvalidAssetError("unsupported hook fragment")
+    result = deepcopy(document)
+    result.update(deepcopy(fragment))
+    return result
+
+
+def remove_keyed(document: dict[str, object], fragment: object) -> dict[str, object]:
+    result = deepcopy(document)
+    if isinstance(fragment, dict):
+        for name, value in fragment.items():
+            if result.get(name) == value:
+                del result[name]
+    return result
+
+
 def contains_fragment(document: dict[str, object], fragment: object, *, key: str = "hooks") -> bool:
     current = document.get(key)
     if isinstance(fragment, dict) and isinstance(current, dict):
