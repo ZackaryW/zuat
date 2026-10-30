@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from zuat.specs.antigravity import AntigravityResolver
 from zuat.specs.claude import ClaudeResolver
 from zuat.specs.codex import CodexResolver
 from zuat.specs.interface import AgentResolver, ResolutionError
@@ -13,6 +14,7 @@ _RESOLVERS = {
     "claude": ClaudeResolver,
     "kimi": KimiResolver,
     "pi": PiResolver,
+    "antigravity": AntigravityResolver,
 }
 
 

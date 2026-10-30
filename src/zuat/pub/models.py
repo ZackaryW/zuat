@@ -16,7 +16,7 @@ from zuat.gitcore.models import (
 from zuat.specs.interface import Materialization
 from zuat.specs.native import PluginRecord
 
-SUPPORTED_AGENTS = ("codex", "claude", "kimi", "pi")
+SUPPORTED_AGENTS = ("codex", "claude", "kimi", "pi", "antigravity")
 SUPPORTED_KINDS = ("skill", "hook", "plugin")
 
 

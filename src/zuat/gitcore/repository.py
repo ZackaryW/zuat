@@ -32,7 +32,7 @@ from zuat.gitcore.models import (
     new_operation_id,
 )
 
-AGENTS = ("codex", "claude", "kimi", "pi")
+AGENTS = ("codex", "claude", "kimi", "pi", "antigravity")
 _AUTHOR = Actor("Zuat", "zuat@local.invalid")
 _INITIAL_PROFILE = "default"
 

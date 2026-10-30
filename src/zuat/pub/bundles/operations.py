@@ -38,7 +38,7 @@ def _agents(agents, default):
     if (
         not selected
         or len(set(selected)) != len(selected)
-        or set(selected) - {"codex", "claude", "pi", "kimi"}
+        or set(selected) - {"codex", "claude", "pi", "kimi", "antigravity"}
     ):
         raise BundleError("select distinct supported agent kinds")
     return selected

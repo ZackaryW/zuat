@@ -83,7 +83,7 @@ def _record(data):
     targets = []
     for item in data["targets"]:
         agent = item["agent"]
-        if agent not in {"codex", "claude", "pi", "kimi"}:
+        if agent not in {"codex", "claude", "pi", "kimi", "antigravity"}:
             raise ValueError("invalid target")
         plugin_id = metadata_identifier(item["plugin_id"])
         revision = item["build_revision"]

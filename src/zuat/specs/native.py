@@ -16,6 +16,7 @@ class Agent(StrEnum):
     CLAUDE = "claude"
     KIMI = "kimi"
     PI = "pi"
+    ANTIGRAVITY = "antigravity"
 
 
 class Scope(StrEnum):
