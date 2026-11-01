@@ -1,6 +1,6 @@
 [project]
 name = "zuat"
-version = "0.1.2"
+version = "0.2.0"
 description = "Zack's useful agent tooling"
 readme = "README.md"
 authors = [
