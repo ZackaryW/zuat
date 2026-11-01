@@ -57,6 +57,9 @@ class GitRegistry:
         self._lock_path = self.root.parent / f".{self.root.name}.zuat.lock"
         self._mutex = threading.RLock()
         self._depth = 0
+        # Operation documents are immutable once written, so decoded events
+        # stay valid until their file identity changes.
+        self._decoded: dict[str, tuple[tuple[int, int, int], JournalEvent]] = {}
         self._check_git()
         self.repo = self._open_or_initialize()
         self._ensure_layout()
@@ -696,10 +699,17 @@ class GitRegistry:
         event_root = self.root / "operations"
         if not event_root.exists():
             return ()
-        events = tuple(
-            self._event_from_dict(self._read_json(path))
-            for path in sorted(event_root.glob("*.json"))
-        )
+        with self._mutex:
+            decoded = {}
+            for path in sorted(event_root.glob("*.json")):
+                stat = path.stat()
+                signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+                cached = self._decoded.get(path.name)
+                if cached is None or cached[0] != signature:
+                    cached = (signature, self._event_from_dict(self._read_json(path)))
+                decoded[path.name] = cached
+            self._decoded = decoded
+            events = tuple(event for _, event in decoded.values())
         expected = tuple(range(1, len(events) + 1))
         if tuple(item.sequence for item in events) != expected:
             raise RegistryError("journal event sequence is not contiguous")
@@ -734,7 +744,7 @@ class GitRegistry:
         try:
             return next(
                 item
-                for item in self.projected_state().catalog
+                for item in map(self._asset_ref_from_dict, self._read_catalog().values())
                 if item.id == asset_id
             )
         except StopIteration as error:
