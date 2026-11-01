@@ -28,6 +28,25 @@ project context remain separate. `home` selects the native user home;
 `project_root` selects a project. Source `trust`, `trust_project`, and ownership
 `force` are independent permissions, not substitutes for one another.
 
+## Journal storage and compatibility
+
+Each operation is one document under `operations/` in the private registry.
+Observations append `observe-delta` events that record only added or changed
+evidence, the prior evidence of changed or removed assets, and the identifiers
+removed by a complete observation. Earlier full-snapshot `observe` events stay
+readable and fold into the same latest observation.
+
+Zuat keeps a derived journal index at `.git/zuat/journal-index.json` inside the
+registry. It answers the next sequence, operation lookup, the latest observation
+and its identity, and artifact policies without decoding operation documents.
+Every read checks it against the operation document names. A stale index folds
+only the newer documents, and a missing, corrupt, or mismatched one is rebuilt
+from the journal. Deleting the index is always safe.
+
+After a registry records its first `observe-delta`, earlier Zuat versions reject
+it with a registry error rather than misreading it. Upgrade every tool that
+shares a registry (for example Powerspec's pinned Zuat) together.
+
 Python hosts can subclass `ZuatExtension`, call `register_extension(instance)`, and
 call `artifact_status`, `resolve_artifacts`, `set_artifact_policy`, or
 `clear_artifact_policy`. Locators receive immutable, transient installed context.

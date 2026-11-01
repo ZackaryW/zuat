@@ -335,7 +335,7 @@ class AssetOperations:
                         if compensated
                         else OperationOutcome.INDETERMINATE
                     )
-                    published = any(item.operation_id == operation_id for item in registry.history())
+                    published = registry.has_operation(operation_id)
                     event = registry.append_event(
                         OperationKind.UPDATE,
                         outcome,

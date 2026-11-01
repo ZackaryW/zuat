@@ -55,15 +55,8 @@ class ArtifactOperations:
         ).hexdigest()
 
     def _policy(self, ref, identifier):
-        """Replay the latest policy event instead of maintaining a second policy store."""
-        key = self._key(ref, identifier)
-        for event in reversed(self.service.registry.history()):
-            if (
-                event.kind is OperationKind.ARTIFACT_POLICY
-                and event.metadata.get("policy_key") == key
-            ):
-                return str(event.metadata["policy"])
-        return "inherit"
+        """Read the latest policy event folded into the derived journal index."""
+        return self.service.registry.latest_policy(self._key(ref, identifier)) or "inherit"
 
     def status(self, ref, identifier, *, revision=None):
         """Gate host artifact eligibility on current native installation evidence.

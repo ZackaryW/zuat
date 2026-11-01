@@ -283,9 +283,7 @@ class PluginOperations:
                 else "plugin operation unavailable or unsupported"
             )
             if marker is not None:
-                if not any(
-                    event.operation_id == marker for event in registry.history()
-                ):
+                if not registry.has_operation(marker):
                     registry.append_event(
                         kind,
                         OperationOutcome.INDETERMINATE,

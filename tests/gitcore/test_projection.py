@@ -75,7 +75,7 @@ def test_fresh_registry_projects_observations_as_a_concrete_tree(
         assert len(operation_files) == 1
         assert operation_files[0].name.startswith("000000000001-op_")
         operation = json.loads(operation_files[0].read_text(encoding="utf-8"))
-        assert operation["kind"] == OperationKind.OBSERVE.value
+        assert operation["kind"] == OperationKind.OBSERVE_DELTA.value
 
         assert not (root / "observations").exists()
         assert not (root / "events").exists()

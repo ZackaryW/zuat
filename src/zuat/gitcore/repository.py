@@ -20,6 +20,7 @@ from zuat.gitcore.errors import (
     RegistryError,
     RegistryLockedError,
 )
+from zuat.gitcore.journal_index import JournalIndex, apply_observation
 from zuat.gitcore.models import (
     AssetEvidence,
     AssetRef,
@@ -60,6 +61,7 @@ class GitRegistry:
         # Operation documents are immutable once written, so decoded events
         # stay valid until their file identity changes.
         self._decoded: dict[str, tuple[tuple[int, int, int], JournalEvent]] = {}
+        self._index: JournalIndex | None = None
         self._check_git()
         self.repo = self._open_or_initialize()
         self._ensure_layout()
@@ -150,24 +152,11 @@ class GitRegistry:
             self._asset_ref_from_dict(value)
             for _, value in sorted(self._read_catalog().items())
         )
-        latest_event = next(
-            (
-                event
-                for event in reversed(self.history())
-                if event.kind is OperationKind.OBSERVE
-            ),
-            None,
-        )
-        latest = (
-            latest_event.metadata.get("observation_identity")
-            if latest_event is not None
-            else None
-        )
         return ProjectedState(
             selected_profile=selected,
             profiles=profiles,
             catalog=catalog,
-            latest_observation=str(latest) if latest is not None else None,
+            latest_observation=self.journal_index().observation_identity,
         )
 
     def profiles(self) -> tuple[Profile, ...]:
@@ -506,13 +495,13 @@ class GitRegistry:
             metadata = clean_metadata(metadata or {})
             if diagnostics:
                 diagnostics = ("plugin operation failed; native details omitted",)
-        events = self.history()
+        index = self.journal_index()
         selected_id = operation_id or new_operation_id()
-        if any(event.operation_id == selected_id for event in events):
+        if selected_id in index.operations:
             raise RegistryError(f"operation identifier already exists: {selected_id}")
         event = JournalEvent(
             operation_id=selected_id,
-            sequence=(events[-1].sequence + 1) if events else 1,
+            sequence=index.sequence + 1,
             kind=OperationKind(kind),
             outcome=OperationOutcome(outcome),
             profile=profile,
@@ -527,6 +516,10 @@ class GitRegistry:
         filename = f"{event.sequence:012d}-{event.operation_id}.json"
         self._atomic_json(self.root / "operations" / filename, event.to_dict())
         self._commit(f"zuat:{event.kind.value}:{event.operation_id}")
+        # A crash before this point leaves a stale index that the next read catches up.
+        with self._mutex:
+            index.fold(event, filename)
+            self._persist_index(index)
         return event
 
     def record_observation(
@@ -559,21 +552,21 @@ class GitRegistry:
                 "utf-8"
             )
         ).hexdigest()
-        previous_event = next(
-            (
-                event
-                for event in reversed(self.history())
-                if event.kind is OperationKind.OBSERVE
-            ),
-            None,
-        )
-        if (
-            previous_event is not None
-            and previous_event.metadata.get("observation_identity") == identity
-        ):
+        index = self.journal_index()
+        if index.observation_identity == identity:
             return None
 
-        before = self.latest_observation()
+        # Diffing against the legacy full-snapshot rule makes folding this
+        # delta equivalent to folding the full observation by construction.
+        prior = index.observation
+        current = apply_observation(
+            prior, ordered, agents=selected_agents, completeness=completeness, context=context
+        )
+        removed = sorted(set(prior) - set(current))
+        changed = sorted(
+            asset_id for asset_id, item in current.items()
+            if asset_id not in prior or prior[asset_id].to_dict() != item.to_dict()
+        )
         self._record_catalog_paths(ordered)
         outcome = {
             "complete": OperationOutcome.SUCCESS,
@@ -581,14 +574,15 @@ class GitRegistry:
             "indeterminate": OperationOutcome.INDETERMINATE,
         }[completeness]
         return self.append_event(
-            OperationKind.OBSERVE,
+            OperationKind.OBSERVE_DELTA,
             outcome,
             profile=self._selected_profile(),
-            before=before,
-            after=ordered,
+            before=tuple(prior[key] for key in sorted({*changed, *removed} & set(prior))),
+            after=tuple(current[key] for key in changed),
             completeness=completeness,
             diagnostics=diagnostics,
             metadata={
+                "observation_removed": removed,
                 "observation_agents": list(selected_agents),
                 "observation_identity": identity,
                 "observation_context": context,
@@ -596,24 +590,7 @@ class GitRegistry:
         )
 
     def latest_observation(self) -> tuple[AssetEvidence, ...]:
-        from zuat.utils.contexts import evidence_context
-        retained: dict[str, AssetEvidence] = {}
-        for event in self.history():
-            if event.kind is not OperationKind.OBSERVE:
-                continue
-            if event.completeness == "complete":
-                selected_agents = {
-                    str(agent)
-                    for agent in event.metadata.get("observation_agents", [])
-                }
-                if not selected_agents:
-                    selected_agents = {item.ref.agent for item in event.after}
-                retained = {
-                    asset_id: item
-                    for asset_id, item in retained.items()
-                    if item.ref.agent not in selected_agents or evidence_context(item) not in {None, event.metadata.get("observation_context")}
-                }
-            retained.update({item.ref.id: item for item in event.after})
+        retained = self.journal_index().observation
         return tuple(retained[key] for key in sorted(retained))
 
     def begin_operation(
@@ -700,28 +677,80 @@ class GitRegistry:
         if not event_root.exists():
             return ()
         with self._mutex:
-            decoded = {}
-            for path in sorted(event_root.glob("*.json")):
-                stat = path.stat()
-                signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
-                cached = self._decoded.get(path.name)
-                if cached is None or cached[0] != signature:
-                    cached = (signature, self._event_from_dict(self._read_json(path)))
-                decoded[path.name] = cached
-            self._decoded = decoded
-            events = tuple(event for _, event in decoded.values())
+            paths = sorted(event_root.glob("*.json"))
+            events = tuple(self._decode(path) for path in paths)
+            names = {path.name for path in paths}
+            self._decoded = {
+                name: cached for name, cached in self._decoded.items() if name in names
+            }
         expected = tuple(range(1, len(events) + 1))
         if tuple(item.sequence for item in events) != expected:
             raise RegistryError("journal event sequence is not contiguous")
         return events
 
-    def event(self, operation_id: str) -> JournalEvent:
-        try:
-            return next(
-                event for event in self.history() if event.operation_id == operation_id
+    def _decode(self, path: Path) -> JournalEvent:
+        stat = path.stat()
+        signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+        cached = self._decoded.get(path.name)
+        if cached is None or cached[0] != signature:
+            cached = (signature, self._event_from_dict(self._read_json(path)))
+            self._decoded[path.name] = cached
+        return cached[1]
+
+    @property
+    def _index_path(self) -> Path:
+        return self.control_root / "journal-index.json"
+
+    def journal_index(self) -> JournalIndex:
+        """Validate the derived index by document names, catching up or rebuilding it."""
+        event_root = self.root / "operations"
+        names = sorted(path.name for path in event_root.glob("*.json")) if event_root.exists() else []
+        for position, name in enumerate(names, 1):
+            if not name[:12].isdigit() or int(name[:12]) != position:
+                raise RegistryError("journal event sequence is not contiguous")
+        with self._mutex:
+            index = self._index if self._index is not None else self._load_index()
+            current = index.sequence <= len(names) and (
+                index.document == names[index.sequence - 1]
+                if index.sequence
+                else index.document is None
             )
-        except StopIteration as error:
-            raise RegistryError(f"unknown operation: {operation_id}") from error
+            if current and index.sequence == len(names):
+                self._index = index
+                return index
+            if not current:
+                index = JournalIndex()
+            for name in names[index.sequence:]:
+                event = self._decode(event_root / name)
+                if event.sequence != index.sequence + 1:
+                    raise RegistryError("journal event sequence is not contiguous")
+                index.fold(event, name)
+            self._persist_index(index)
+            return index
+
+    def _load_index(self) -> JournalIndex:
+        try:
+            return JournalIndex.from_dict(
+                self._read_json(self._index_path), self._evidence_from_dict
+            )
+        except (RegistryError, KeyError, TypeError, ValueError):
+            return JournalIndex()
+
+    def _persist_index(self, index: JournalIndex) -> None:
+        self._index = index
+        self._atomic_json(self._index_path, index.to_dict())
+
+    def event(self, operation_id: str) -> JournalEvent:
+        document = self.journal_index().operations.get(operation_id)
+        if document is None:
+            raise RegistryError(f"unknown operation: {operation_id}")
+        return self._decode(self.root / "operations" / document)
+
+    def has_operation(self, operation_id: str) -> bool:
+        return operation_id in self.journal_index().operations
+
+    def latest_policy(self, key: str) -> str | None:
+        return self.journal_index().policies.get(key)
 
     def ensure_asset_ref(
         self, *, agent: str, kind: str, scope: str, locator: str

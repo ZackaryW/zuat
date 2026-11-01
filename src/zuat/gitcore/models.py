@@ -17,6 +17,7 @@ class Authority(StrEnum):
 
 class OperationKind(StrEnum):
     OBSERVE = "observe"
+    OBSERVE_DELTA = "observe-delta"
     INSTALL = "install"
     UNINSTALL = "uninstall"
     UPDATE = "update"

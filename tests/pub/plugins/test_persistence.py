@@ -78,3 +78,19 @@ def test_old_plugin_history_rejected_without_rewriting_or_harming_globals(setup)
     with pytest.raises(Exception, match="fresh registry"):
         service.registry.history()
     assert event_path.read_bytes() == original
+
+
+def test_plugin_removal_survives_metadata_cleaning(setup):
+    service, native, _ = setup
+    native.version = "1"
+    observed = service.status(ZuatRequest(agents=("claude",)))
+    assert observed.ok, observed.diagnostics
+    plugin_ids = {item.ref.id for item in observed.assets if item.ref.kind == "plugin"}
+    assert plugin_ids
+    native.version = None
+    removed = service.status(ZuatRequest(agents=("claude",)))
+    assert removed.ok, removed.diagnostics
+    event = service.registry.history()[-1]
+    assert event.kind is OperationKind.OBSERVE_DELTA
+    assert plugin_ids <= set(event.metadata["observation_removed"])
+    assert not plugin_ids & {item.ref.id for item in service.registry.latest_observation()}

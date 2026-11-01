@@ -34,7 +34,7 @@ def clean_metadata(metadata):
     for key, value in metadata.items():
         if key in scalar_keys and value is not None:
             cleaned[key] = metadata_identifier(value)
-        elif key == "observation_agents" and isinstance(value, list):
+        elif key in {"observation_agents", "observation_removed"} and isinstance(value, list):
             cleaned[key] = [metadata_identifier(agent) for agent in value]
         elif key == "plugin_ref" and isinstance(value, dict):
             from zuat.specs.native import PluginRef

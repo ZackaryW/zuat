@@ -34,8 +34,8 @@ def test_changed_observations_append_and_identical_observations_deduplicate(
         assert changed is not None
         assert duplicate_evidence.ref == initial.ref == changed_evidence.ref
         assert [event.kind for event in registry.history()] == [
-            OperationKind.OBSERVE,
-            OperationKind.OBSERVE,
+            OperationKind.OBSERVE_DELTA,
+            OperationKind.OBSERVE_DELTA,
         ]
         assert registry.projected_state().profile("default").assets == ()
 
